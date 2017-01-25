@@ -39,6 +39,7 @@ public:
     virtual void        multiRead_top(uint64_t *,int,void **,int *){};
     virtual int         multiRead_bottom(uint64_t *,int,void **,int *){};
 #endif
+    virtual int         remove(uint64_t){};
     virtual bool        isFull(uint64_t){return false;};
     virtual bool        isFullAll(){return false;};
     virtual int         getUsage(ServerUsage**){};

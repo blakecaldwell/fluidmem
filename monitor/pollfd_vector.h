@@ -18,6 +18,8 @@ typedef struct {
 	struct pollfd *list;
 } Pollfd_vector;
 
+extern Pollfd_vector pollfd_vector;
+
 int pollfd_vector_init(Pollfd_vector *vector);
 void pollfd_vector_append(Pollfd_vector *vector, struct pollfd fd);
 int pollfd_vector_remove(Pollfd_vector *vector, int fd);

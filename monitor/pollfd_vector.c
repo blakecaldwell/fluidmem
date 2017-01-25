@@ -49,8 +49,8 @@ void pollfd_vector_append(Pollfd_vector *vector, struct pollfd fd) {
 
 	vector->size += 1;
 #ifdef MONITORSTATS
-	// decrement by 2 for add and remove reload fds
-	StatsSetNumUFDS(vector->size - 2);
+	// decrement by 1 for add reload fd
+	StatsSetNumUFDS(vector->size - 1);
 #endif
 	vector->list[vector->size - 1] = fd;
 
@@ -82,8 +82,8 @@ int pollfd_vector_remove(Pollfd_vector *vector, int fd) {
 			vector->list[i] = vector->list[vector->size - 1];
 			vector->size -= 1;
 #ifdef MONITORSTATS
-			// decrement by 2 for add and remove reload fds
-			StatsSetNumUFDS(vector->size - 2);
+			// decrement by 1 for add reload fd
+			StatsSetNumUFDS(vector->size - 1);
 #endif
 			// compact pollfd vector with reduced size
 			pollfd_vector_compact(vector);
@@ -108,9 +108,9 @@ void pollfd_vector_double(Pollfd_vector *vector) {
 void pollfd_vector_close(Pollfd_vector *vector) {
 	log_trace_in("%s", __func__);
 
-	log_warn("%s: closing %d userfault fd's", __func__, vector->size - 2);
+	log_warn("%s: closing %d userfault fd's", __func__, vector->size - 1);
 
-	// close fds with index 0 (reload_fd) and 1 (add_fd) as well
+	// close fd with index 0 (reload_fd) as well
 	int i;
 	for (i = 0; i < vector->size; i++) {
 		close(vector->list[i].fd);

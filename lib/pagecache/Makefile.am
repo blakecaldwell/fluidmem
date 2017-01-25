@@ -42,9 +42,9 @@ noinst_LTLIBRARIES = libPageCacheImpl.la
 libPageCacheImpl_la_LDFLAGS = -L../monitorstats -Wl,-rpath,../monitorstats
 libPageCacheImpl_la_LIBADD = ../monitorstats/libmonitorstats.la
 
-libPageCacheImpl_la_SOURCES = PageCacheImpl.hh PageCacheImpl.cc PageCache.hh upid.h
+libPageCacheImpl_la_SOURCES = PageCacheImpl.hh PageCacheImpl.cc PageCache.hh upid.h externRAMClientWrapper.h
 libPageCacheImpl_la_CPPFLAGS = -std=c++0x $(PAGECACHE_FLAGS) -I$(SCALEOS_ROOT)/include \
-  -I$(SCALEOS_ROOT)/lib/monitorstats -I$(SCALEOS_ROOT)/lib/userfault
+  -I$(SCALEOS_ROOT)/lib/monitorstats -I$(SCALEOS_ROOT)/lib/userfault -I$(SCALEOS_ROOT)/lib/externram
 
 lib_LTLIBRARIES = libpagecache.la
 libpagecache_la_SOURCES = PageCacheWrapper.h PageCacheWrapper.cc

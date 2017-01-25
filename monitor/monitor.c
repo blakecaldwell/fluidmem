@@ -139,12 +139,6 @@ int init_poll_list(void) {
       return -1;
   }
 
-  pollfd_vector.reload_removefd = eventfd(0, EFD_CLOEXEC);
-  if (pollfd_vector.reload_removefd == -1) {
-      log_err("%s: Opening reload_removefd", __func__);
-      return -1;
-  }
-
   // First pollfd in array is reload_addfd
   struct pollfd reload_add;
   reload_add.fd = pollfd_vector.reload_addfd;
@@ -152,38 +146,8 @@ int init_poll_list(void) {
   reload_add.revents = 0;
   pollfd_vector_append(&pollfd_vector, reload_add);
 
-  // Second pollfd in array is reload_addfd
-  struct pollfd reload_remove;
-  reload_remove.fd = pollfd_vector.reload_removefd;
-  reload_remove.events = POLLIN;
-  reload_remove.revents = 0;
-  pollfd_vector_append(&pollfd_vector, reload_remove);
-
   log_trace_out("%s", __func__);
   return 0;
-}
-
-
-/*
- * remove_ufd_handler(void *userfault_fd)
- *
- * Remove file descriptor from pollfd_vector,
- * notify the polling thread, and exit
- */
-void *remove_ufd_handler(void *userfault_fd) {
-  log_trace_in("%s", __func__);
-  setThreadCPUAffinity(CPU_FOR_REMOVE_UFD_HANDLER_THREAD, "remove_ufd_handler", TID());
-
-  int ufd = *(int*)userfault_fd;
-  log_info("%s: started remove_ufd_handler for ufd %d", __func__, ufd);
-  if (flush_buffers(ufd) != 0) {
-    log_debug("%s: flush_buffers failed", __func__);
-  }
-
-  num_threads--;
-  free(userfault_fd);
-  log_trace_out("%s", __func__);
-  pthread_exit(NULL);
 }
 
 
@@ -249,17 +213,10 @@ int handle_userfault(int ufd) {
         // ufd is contained in ret
         log_debug("%s: removing fd %d from pollfd_vector", __func__, ret);
         if (del_fd(&pollfd_vector, ret) == 0) {
-          int * fd = malloc(sizeof(*fd));
-          *fd = ret;
-
-          num_threads++;
-          rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-          if (rc) {
-            num_threads--;
-            log_err("return code from remove_ufd_handler() is %d", rc);
-            discard_timing();
-            return rc;
-          }
+          log_debug("%s: removed fd %d from pollfd_vector",  __func__, ret);
+        }
+        else {
+          log_debug("%s: failed removing fd %d from pollfd_vector",  __func__, ret);
         }
       }
 
@@ -276,16 +233,10 @@ int handle_userfault(int ufd) {
 
       log_debug("%s: removing fd %d from pollfd_vector", __func__, ufd);
       if (del_fd(&pollfd_vector, ufd) == 0) {
-        int * fd = malloc(sizeof(*fd));
-        *fd = ufd;
-
-        num_threads++;
-        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-        if (rc) {
-          num_threads--;
-          log_err("return code from remove_ufd_handler() is %d", rc);
-          return rc;
-        }
+        log_debug("%s: removed fd %d from pollfd_vector",  __func__, ufd);
+      }
+      else {
+        log_debug("%s: failed removing fd %d from pollfd_vector",  __func__, ufd);
       }
 
       break;
@@ -306,8 +257,7 @@ handle_userfault_out:
  *
  * Called by the polling thread. It needs to be thread safe, since
  * new_ufd_handler could try to add a file descriptor to pollfd_vector
- * at any time, which will be signalled by an event on reload_addfd or
- * remove a file descriptor signalled by an event on reload_removefd
+ * at any time, which will be signalled by an event on reload_addfd.
  */
 void poll_on_ufds(void) {
   log_trace_in("%s", __func__);
@@ -364,55 +314,8 @@ void poll_on_ufds(void) {
       add_fd(&pollfd_vector, ufd);
     }
 
-    if (pollfd_vector.list[1].revents > 0) {
-      /* There's an event on reload_removefd */
-
-      if (pollfd_vector.list[1].revents & POLLERR) {
-        log_err("%s: poll on remove_fd retured POLLERR", __func__);
-        break;
-      }
-
-      if (!(pollfd_vector.list[1].revents & POLLIN)) {
-        log_err("%s: poll on remove_fd didn't return POLLIN, revents=%lx", __func__, pollfd_vector.list[1].revents);
-        break;
-      }
-
-      log_trace("%s: event on reload_removefd", __func__);
-      if (read(pollfd_vector.list[1].fd, &ufd64, sizeof(uint64_t)) != sizeof(uint64_t)) {
-        log_err("%s: invalid read of reload_removefd", __func__);
-        break;
-      }
-
-      log_lock("%s: unlocking remove_fd_lock",  __func__);
-      pthread_mutex_unlock(&pollfd_vector.remove_fd_lock);
-      log_lock("%s: unlocked remove_fd_lock",  __func__);
-
-      ufd = (int) ufd64;
-      if (ufd <= 0) {
-        log_err("%s: read invalid fd %d from reload_removefd", __func__, ufd);
-        break;
-      }
-      log_debug("%s: read fd %d from reload_removefd", __func__, ufd);
-
-      log_debug("%s: removing fd %d from pollfd_vector", __func__, ufd);
-      if (del_fd(&pollfd_vector, ufd) == 0) {
-        int * fd = malloc(sizeof(*fd));
-        *fd = ufd;
-
-        num_threads++;
-        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-        if (rc) {
-          num_threads--;
-          log_err("return code from remove_ufd_handler() is %d", rc);
-          return;
-        }
-      }
-
-    }
-
     /* pollfd_vector.list[0] is reload_addfd */
-    /* pollfd_vector.list[1] is reload_removefd */
-    for (i = 2; i < pollfd_vector.size; i++) {
+    for (i = 1; i < pollfd_vector.size; i++) {
       /* There's an event on one of the usefaultfd's */
       if (pollfd_vector.list[i].revents > 0) {
         if (pollfd_vector.list[i].revents & POLLERR) {
@@ -487,18 +390,11 @@ void *reaper_thread(void * tmp) {
 
     num_dead_fds = purgeDeadUpids(ufd_list_ptr);
     for (i = 0; i < num_dead_fds; i++) {
-      int * fd = malloc(sizeof(*fd));
-      *fd = (*ufd_list_ptr)[i];
+      int fd = (*ufd_list_ptr)[i];
 
-      log_debug("%s: removing fd %d from pollfd_vector", __func__, *fd);
-      if (del_fd(&pollfd_vector, *fd) == 0) {
-        num_threads++;
-        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-        if (rc) {
-          num_threads--;
-          log_err("return code from remove_ufd_handler() is %d", rc);
-          break;
-        }
+      log_debug("%s: removing fd %d from pollfd_vector", __func__, fd);
+      if (del_fd(&pollfd_vector, fd) != 0) {
+        log_warn("%s: failed removing fd %d from pollfd_vector",  __func__, fd);
       }
     }
 

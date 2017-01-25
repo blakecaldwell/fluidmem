@@ -35,7 +35,6 @@
 #include <linux/un.h>
 #include <bits/socket.h>
 
-#include <externRAMClientWrapper.h>
 #include <LRUBufferWrapper.h>
 #include <PageCacheWrapper.h>
 #include "../lrubuffer/c_cache_node.h"
@@ -1067,7 +1066,7 @@ int read_from_externram(int ufd, void * pageaddr) {
   declare_timers();
   bool sync = true;
   int length = -1;
-  int ret = -1;
+  int ret = -1, ret2 = -1;
   int ret_munmap = -1;
 #ifdef MONITORSTATS
   StatsIncrPageFault_notlocked();
@@ -1198,7 +1197,6 @@ int read_from_externram(int ufd, void * pageaddr) {
 #endif
 
 #ifdef ASYNREAD
-  int ret2 = 0;
   ret2 = evict_if_needed(ufd, pageaddr, ASYN_PAGE);
 
 #ifdef PAGECACHE
@@ -1259,12 +1257,41 @@ int read_from_externram(int ufd, void * pageaddr) {
   return ret;
 }
 
-int flush_lru(int ufd, int flush_or_delete) {
+/*
+ * Delete_from_externram store
+ * This function will delete the page from externram
+ *
+ */
+static inline int delete_from_externram(int ufd, externRAMClient *client, void * pageaddr) {
+  log_trace_in("%s", __func__);
+
+  int ret = 0;
+  // delete page from externram
+  if (client) {
+    int ret = removePage(client, (uint64_t)(uintptr_t)pageaddr);
+    if (ret != 1) {
+      log_warn("%s: failed deleting page %p", __func__, pageaddr);
+    }
+  }
+  else {
+    log_err("%s: invalid externram client handle", __func__);
+    ret = -1;
+  }
+
+  log_trace_out("%s", __func__);
+  return ret;
+}
+
+
+int flush_buffers(int ufd, externRAMClient *client, int flush_or_delete) {
   log_trace_in("%s", __func__);
 
   uint64_t * page_list = NULL;
-  int num_pages = 0;
+  int num_pages;
   int i, ret;
+
+  // If we are flushing pages, only lru buffer has dirty pages to flush.
+  num_pages = 0;
 
   log_lock("%s: locking lru_lock", __func__);
   pthread_mutex_lock(&lru_lock);
@@ -1281,10 +1308,14 @@ int flush_lru(int ufd, int flush_or_delete) {
   }
 
   if (flush_or_delete == FLUSH_TO_EXTERNRAM) {
+    // in this case ufd better not have been removed from map
     for (i = 0; i < num_pages; i++) {
       ret = evict_to_externram(ufd, (void *)(uintptr_t)page_list[i]);
       if (ret == 0) {
         log_debug("%s: flush of page %p succeeded", __func__, (void*)(uintptr_t)page_list[i]);
+      }
+      else if (ret == 2) {
+        log_debug("%s: flush of page %p delayed", __func__, (void*)(uintptr_t)page_list[i]);
       }
       else
         log_err("%s: flush of page %p failed", __func__, (void*)(uintptr_t)page_list[i]);
@@ -1296,17 +1327,26 @@ int flush_lru(int ufd, int flush_or_delete) {
     free(page_list);
   }
 
+
 #ifdef PAGECACHE
   // Clean up pages in PageCache
+  num_pages = 0;
 
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
 
-  page_list = removeUFDFromPageCache(pageCache, ufd, &num_pages);
+  removeUFDFromPageCache(pageCache, ufd, &num_pages);
   if ( num_pages < 0) {
     log_err("%s: failed trying to remove entries for UFD %d from PageCache", __func__, ufd);
   }
+  if (num_pages > 0) {
+    log_debug("%s: removed %d pages from page cache", __func__, num_pages);
+  }
+
+  // Now clean up all pages that we've seen before (in pagehash)
+  num_pages = 0;
+
   page_list = removeUFDFromPageHash(pageCache, ufd, &num_pages);
   if ( num_pages < 0) {
     log_err("%s: failed trying to remove entries for UFD %d from PageHash", __func__, ufd);
@@ -1316,17 +1356,28 @@ int flush_lru(int ufd, int flush_or_delete) {
   pthread_mutex_unlock(&pagecache_lock);
   log_lock("%s: unlocked pagecache_lock", __func__);
 
+  // pages in page_list are from page hash. If process is dead, we
+  // can use this list to delete them and free up space
+  if (flush_or_delete == DELETE_FROM_EXTERNRAM) {
+    for (i = 0; i < num_pages; i++) {
+      ret = delete_from_externram(ufd, client, (void *)(uintptr_t)page_list[i]);
+      if (ret == 0) {
+        log_debug("%s: deletion of page %p succeeded", __func__, (void*)(uintptr_t)page_list[i]);
+      }
+      else if (ret == -1) {
+        log_warn("%s: skipping deletion of page hash pages from externram for invalid ufd %d", __func__, ufd);
+        break;
+      }
+      else
+        log_err("%s: deletion of page %p failed", __func__, (void*)(uintptr_t)page_list[i]);
+    }
+  }
+
   if (num_pages > 0) {
     log_debug("%s: removed %d tracked pages", __func__, num_pages);
     free(page_list);
   }
 #endif
-  // TODO: delete page_list from externram
-  /*
-  if (flush_or_delete == DELETE_FROM_EXTERNRAM) {
-    break;
-  }
-  */
 
   log_trace_out("%s", __func__);
   return num_pages;
@@ -1519,44 +1570,8 @@ out:
   return sent_fd;
 }
 
-int flush_buffers(int ufd) {
-  log_trace_in("%s", __func__);
 
-  int ret = 0;
-
-  // get_upid_by_fd needs to be called before taking fdUpidMap_lock
-  uint64_t upid = get_upid_by_fd(ufd);
-  if (upid == 0) {
-    log_debug("%s ufd %d not found in fdUpidMap", __func__, ufd);
-    return -1;
-  }
-
-  log_lock("%s: locking fdUpidMap_lock", __func__);
-  pthread_mutex_lock(&fdUpidMap_lock);
-  log_lock("%s: locked fdUpidMap_lock", __func__);
-
-  if (del_fd_from_map(ufd) < 0) {
-    log_debug("%s: failed to remove dead ufd %d from upid map", __func__, ufd);
-  }
-  else {
-    log_debug("%s: removed ufd %d from the upid map", __func__, ufd);
-  }
-
-  // remove upid from zookeeper
-  log_lock("%s: locking zh_lock", __func__);
-  pthread_mutex_lock(&zh_lock);
-  log_lock("%s: locked zh_lock", __func__);
-  if (del_upid(zookeeperConn, upid) < 0) {
-    log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, upid);
-  }
-  log_lock("%s: unlocking zh_lock", __func__);
-  pthread_mutex_unlock(&zh_lock);
-  log_lock("%s: unlocked zh_lock", __func__);
-
-  log_lock("%s: unlocking fdUpidMap_lock", __func__);
-  pthread_mutex_unlock(&fdUpidMap_lock);
-  log_lock("%s: unlocked fdUpidMap_lock", __func__);
-
+void flush_write_list() {
 
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   // flush write_list
@@ -1578,9 +1593,22 @@ int flush_buffers(int ufd) {
   log_lock("%s: sem_waited flushed_write_sem", __func__);
 #endif
 
-  if (flush_lru(ufd, DELETE_FROM_EXTERNRAM) < 0) {
-    log_debug("%s: failed to flush entries for dead ufd %d", __func__, ufd);
-    return -1;
+}
+
+int flush_ufd(int ufd, struct externRAMClient *client) {
+  log_trace_in("%s", __func__);
+
+  int ret = 0;
+
+  if (client) {
+    if (flush_buffers(ufd, client, DELETE_FROM_EXTERNRAM) < 0) {
+      log_debug("%s: failed to flush entries for dead ufd %d", __func__, ufd);
+      return -1;
+    }
+  }
+  else {
+    log_warn("%s: couldn't get externram client handle for fd %d", __func__, ufd);
+    ret = -1;
   }
 
   log_trace_out("%s", __func__);
@@ -1595,26 +1623,11 @@ int purgeDeadUpids(int ** ufd_list_ptr) {
   uint32_t pid;
   uint16_t node_id = get_node_id();
   int num_dead_ufds = 0;
+  int ret = 0;
+  int temp_fd;
+  struct externRAMClient *client;
 
-#ifdef THREADED_WRITE_TO_EXTERNRAM
-  // flush write_list
-  log_lock("%s: locking flush_write_needed_lock", __func__);
-  pthread_mutex_lock(&flush_write_needed_lock);
-  log_lock("%s: locked flush_write_needed_lock", __func__);
-
-  flushWriteListNeeded = true;
-
-  log_lock("%s: unlocking flush_write_needed_lock", __func__);
-  pthread_mutex_unlock(&flush_write_needed_lock);
-  log_lock("%s: unlocked flush_write_needed_lock", __func__);
-
-  sem_post(&writer_sem);
-  log_lock("%s: sem_posted writer_sem", __func__);
-
-  log_lock("%s: sem_waiting flushed_write_sem", __func__);
-  sem_wait(&flushed_write_sem);
-  log_lock("%s: sem_waited flushed_write_sem", __func__);
-#endif
+  flush_write_list();
 
   log_lock("%s: locking fdUpidMap_lock", __func__);
   pthread_mutex_lock(&fdUpidMap_lock);
@@ -1622,18 +1635,44 @@ int purgeDeadUpids(int ** ufd_list_ptr) {
 
   HASH_ITER(hh, fdUpidMap, current, temp) {
     memcpy(upid, &current->upid, 8);
+    temp_fd = current->fd;
+
     if (*((uint16_t*) &upid[0]) == node_id) {
       // correct node
       pid = *((uint32_t*) &upid[2]);
       if (getpgid(pid) < 0) {
         // pid is dead
-        log_info("%s: detected dead pid %u", __func__, pid);
-        if (flush_lru(current->fd, DELETE_FROM_EXTERNRAM) < 0) {
-          log_warn("%s: failed to flush entries for dead ufd %d", __func__, current->fd);
+
+        // get externram client handle for use later
+        client = current->client;
+
+        if (del_fd_from_map(temp_fd) < 0) {
+          log_warn("%s: failed to remove dead ufd %d from upid map", __func__, temp_fd);
+        }
+        else {
+          log_debug("%s: removed ufd %d from the upid map", __func__, temp_fd);
+        }
+
+        // want fdUpidMap_lock unlocked for flush_ufd
+        log_lock("%s: unlocking fdUpidMap_lock", __func__);
+        pthread_mutex_unlock(&fdUpidMap_lock);
+        log_lock("%s: unlocked fdUpidMap_lock", __func__);
+
+        if (client) {
+          if (flush_ufd(temp_fd, client) < 0) {
+            log_warn("%s: failed to flush buffers for ufd %d", __func__, temp_fd);
+          }
+        }
+        else {
+          log_warn("%s: couldn't get externram client handle for fd %d", __func__, temp_fd);
+        }
+
+        if (remove_upid(*upid) < 0) {
+          log_warn("%s: failed to remove dead upid 0x%llx", __func__, *upid);
         }
 
         // add fd to list for monitor to remove from poll list
-        (*ufd_list_ptr)[num_dead_ufds] = current->fd;
+        (*ufd_list_ptr)[num_dead_ufds] = temp_fd;
         num_dead_ufds++;
 
         // increase size by one for the next ufd
@@ -1641,23 +1680,9 @@ int purgeDeadUpids(int ** ufd_list_ptr) {
         if(!(*ufd_list_ptr)) {
           log_err("%s: failed to increase size of ufd_list to %s", __func__, num_dead_ufds + 1);
         }
-        log_debug("adding fd %d to ufd_list: %p", (*ufd_list_ptr)[num_dead_ufds-1], *ufd_list_ptr);
-
-        log_info("%s: removing ufd %d from the upid map", __func__, current->fd);
-        if (del_fd_from_map(current->fd) < 0) {
-          log_warn("%s: failed to remove dead ufd %d from upid map", __func__, current->fd);
-        }
-
-        // remove upid from zookeeper
-        log_lock("%s: locking zh_lock", __func__);
-        pthread_mutex_lock(&zh_lock);
-        log_lock("%s: locked zh_lock", __func__);
-        if (del_upid(zookeeperConn, current->upid) < 0) {
-          log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, current->upid);
-        }
-        log_lock("%s: unlocking zh_lock", __func__);
-        pthread_mutex_unlock(&zh_lock);
-        log_lock("%s: unlocked zh_lock", __func__);
+        log_lock("%s: locking fdUpidMap_lock", __func__);
+        pthread_mutex_lock(&fdUpidMap_lock);
+        log_lock("%s: locked fdUpidMap_lock", __func__);
       }
     }
   }
@@ -1709,6 +1734,27 @@ int listPids(uint32_t ** pid_list_ptr) {
   return num_pids;
 }
 
+int remove_upid(uint64_t upid) {
+  int ret = 0;
+
+  // remove upid from zookeeper
+  log_lock("%s: locking zh_lock", __func__);
+  pthread_mutex_lock(&zh_lock);
+  log_lock("%s: locked zh_lock", __func__);
+
+  if (del_upid(zookeeperConn, upid) < 0) {
+    log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, upid);
+    ret = -1;
+  }
+
+  log_lock("%s: unlocking zh_lock", __func__);
+  pthread_mutex_unlock(&zh_lock);
+  log_lock("%s: unlocked zh_lock", __func__);
+
+  return ret;
+}
+
+
 int removePid(uint32_t pidToRemove) {
   log_trace_in("%s", __func__);
 
@@ -1716,8 +1762,9 @@ int removePid(uint32_t pidToRemove) {
   uint8_t upid[8];
   uint32_t pid;
   uint16_t node_id = get_node_id();
-  int num_dead_ufds = 0;
-  int rc = -1;
+  int rc = 0;
+  int temp_fd = 0;
+  struct externRAMClient *client;
 
   log_lock("%s: locking fdUpidMap_lock", __func__);
   pthread_mutex_lock(&fdUpidMap_lock);
@@ -1725,33 +1772,54 @@ int removePid(uint32_t pidToRemove) {
 
   HASH_ITER(hh, fdUpidMap, current, temp) {
     memcpy(upid, &current->upid, 8);
+    temp_fd = current->fd;
+
     if (*((uint16_t*) &upid[0]) == node_id) {
       // correct node
+
       pid = *((uint32_t*) &upid[2]);
       if (pid == pidToRemove) {
-        if (flush_lru(current->fd, DELETE_FROM_EXTERNRAM) < 0) {
-          log_warn("%s: failed to flush entries for pid %u with ufd %d", __func__, pid, current->fd);
+
+        // get externram client handle for use later
+        client = current->client;
+
+        if (del_fd_from_map(temp_fd) < 0) {
+          log_warn("%s: failed to remove dead ufd %d from upid map", __func__, temp_fd);
+          rc = -1;
+        }
+        else {
+          log_debug("%s: removed ufd %d from the upid map", __func__, temp_fd);
         }
 
-        log_info("%s: removing ufd %d from the upid map", __func__, current->fd);
-        if (del_fd_from_map(current->fd) < 0) {
-          log_warn("%s: failed to remove dead ufd %d from upid map", __func__, current->fd);
+        // want fdUpidMap_lock unlocked for flush_ufd
+        log_lock("%s: unlocking fdUpidMap_lock", __func__);
+        pthread_mutex_unlock(&fdUpidMap_lock);
+        log_lock("%s: unlocked fdUpidMap_lock", __func__);
+
+        log_info("%s: removed dead pid %u from map", __func__, pid);
+
+        if (client) {
+          if (flush_ufd(temp_fd, client) < 0) {
+            log_warn("%s: failed to flush buffers for ufd %d", __func__, temp_fd);
+            rc = -1;
+          }
+        }
+        else {
+          log_warn("%s: couldn't get externram client handle for fd %d", __func__, temp_fd);
+          rc = -1;
         }
 
-        // remove upid from zookeeper
-        log_lock("%s: unlocking zh_lock", __func__);
-        pthread_mutex_unlock(&zh_lock);
-        log_lock("%s: unlocked zh_lock", __func__);
-        if (del_upid(zookeeperConn, current->upid) < 0) {
-          log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, current->upid);
+        if (remove_upid(*upid) < 0) {
+          log_warn("%s: failed to remove dead upid 0x%llx", __func__, *upid);
+          rc = -1;
         }
-        log_lock("%s: locking zh_lock", __func__);
-        pthread_mutex_lock(&zh_lock);
-        log_lock("%s: locked zh_lock", __func__);
 
         // there's only one pid to remove, so we're done
-        rc = 0;
         break;
+
+        log_lock("%s: locking fdUpidMap_lock", __func__);
+        pthread_mutex_lock(&fdUpidMap_lock);
+        log_lock("%s: locked fdUpidMap_lock", __func__);
       }
     }
   }
@@ -1759,6 +1827,11 @@ int removePid(uint32_t pidToRemove) {
   log_lock("%s: unlocking fdUpidMap_lock", __func__);
   pthread_mutex_unlock(&fdUpidMap_lock);
   log_lock("%s: unlocked fdUpidMap_lock", __func__);
+
+  if (temp_fd == 0) {
+    log_warn("%s: no pid %u found in upid map", __func__, pidToRemove);
+    rc = -1;
+  }
 
   log_trace_out("%s", __func__);
   return rc;

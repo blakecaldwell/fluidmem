@@ -60,7 +60,7 @@ extern "C" {
   {
     pageCache->storePagesInPageCache( hashcodes, fd, num_pages, bufs, lengths);
   }
-  uint64_t * removeUFDFromPageCache( PageCache * pageCache, int fd, int * numPages )
+  void removeUFDFromPageCache( PageCache * pageCache, int fd, int * numPages )
   {
     pageCache->removeUFDFromPageCache( fd, numPages);
   }

@@ -22,6 +22,7 @@
 #include <string>
 #include <memory>
 #include <sys/user.h> /* for PAGE_SIZE */
+#include <sys/mman.h> /* for munmap */
 #ifdef TIMING
 #include <timingstats.h>
 #endif
@@ -319,12 +320,14 @@ int externRAMClientImpl::remove(uint64_t key) {
 
   it = kv.find(key);
   if (it != kv.end()) {
-    free(it->second);
+    // use munmap instead of free because the page may have been
+    // in the process address space and no longer be valid
+    munmap(it->second, PAGE_SIZE);
     kv.erase(it);
     log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
     log_lock("%s: unlocked noop_mutex", __func__);
-    ret = -1;
+    ret = 1;
   }
   else {
     log_lock("%s: unlocking noop_mutex", __func__);

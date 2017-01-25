@@ -64,6 +64,10 @@ extern "C" {
     return ret;
   }
 
+  int removePage(externRAMClient* c, uint64_t key) {
+    return c->remove(key);
+  }
+
   int readPage(externRAMClient *c, uint64_t key, void ** recvBuf) {
     return c->read(key,recvBuf);
   }

@@ -640,7 +640,7 @@ void PageCacheImpl::invalidatePageCache( uint64_t hashcode, int fd )
   pageCache.erase( hashcode, fd );
   changeOwnership( hashcode, fd, OWNERSHIP_EXTERNRAM );
 
-  log_debug("%s: removing cache for page %lx fd %d", __func__, hashcode, fd);
+  log_debug("%s: removed page cache entry for %lx fd %d", __func__, hashcode, fd);
 
   log_trace_out("%s", __func__);
 }
@@ -652,7 +652,7 @@ uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
   uint64_t * keyList;
   const char * t;
   uint64_t hashcode;
-  int ufd; 
+  int ufd;
 
   page_hash::iterator itr = pagehash.begin();
   int i=0;
@@ -661,7 +661,10 @@ uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
     hashcode = *((uint64_t*) &t[0]);
     ufd = *((int*) &t[sizeof(uint64_t)]);
     if (ufd == fd) {
-      keyVector.push_back(hashcode & (uint64_t)(PAGE_MASK));
+      // only put on keyVector if it is in externram
+      if( itr->second->ownership==OWNERSHIP_EXTERNRAM ) {
+        keyVector.push_back(hashcode & (uint64_t)(PAGE_MASK));
+      }
       pagehash.erase(itr);
     }
   }
@@ -677,11 +680,10 @@ uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
   return keyList;
 }
 
-uint64_t * PageCacheImpl::removeUFDFromPageCache(int fd, int * numPages) {
+void PageCacheImpl::removeUFDFromPageCache(int fd, int * numPages) {
   log_trace_in("%s", __func__);
 
   std::vector<uint64_t> keyVector;
-  uint64_t * keyList;
 
   page_item_list::iterator itr = pageCache.begin();
   int i=0;
@@ -697,12 +699,5 @@ uint64_t * PageCacheImpl::removeUFDFromPageCache(int fd, int * numPages) {
   }
   *numPages = keyVector.size();
 
-  // populate the memory region to be returned to libuserfault
-  keyList = (uint64_t *)malloc(keyVector.size() * sizeof(uint64_t));
-  for(std::vector<uint64_t>::size_type i = 0; i != keyVector.size(); i++) {
-     memcpy(&keyList[i], &keyVector[i], sizeof(uint64_t));
-  }
-
   log_trace_out("%s", __func__);
-  return keyList;
 }

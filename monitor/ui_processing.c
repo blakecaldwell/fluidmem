@@ -11,6 +11,7 @@
 /* FluidMem includes */
 #include <userfault.h>
 #include <dbg.h>
+#include "pollfd_vector.h"
 #ifdef MONITORSTATS
 #include <monitorstats.h>
 #ifdef TIMING
@@ -141,6 +142,11 @@ void *ui_processing_thread(void * tmp)
         }
         else if( menu == MENU_DISCONNECT )
         {
+          // flush any pending pages from the write list
+          // not completely necessary, but this makes it easier to
+          // remove entries from externram
+          flush_write_list();
+
           int pid = atoi(token);
           if (removePid((uint32_t)pid) < 0)
             fprintf(out, "error removing pid %u\n", (uint32_t)pid);
@@ -183,10 +189,21 @@ void *ui_processing_thread(void * tmp)
         {
           int * ufd_list = malloc(1 * sizeof(int));
           int ** ufd_list_ptr = &ufd_list;
-          int num_dead_fds = 0;
+          int i = 0, num_dead_fds = 0;
+          int fd;
 
           num_dead_fds = purgeDeadUpids(ufd_list_ptr);
-          free(*ufd_list_ptr);
+
+          for (i = 0; i < num_dead_fds; i++) {
+            fd = (*ufd_list_ptr)[i];
+
+            log_debug("%s: removing fd %d from pollfd_vector", __func__, fd);
+            if (del_fd(&pollfd_vector, fd) != 0) {
+               log_info("%s: failed to remove ufd %d from poll list", __func__, fd);
+            }
+          }
+
+          free(ufd_list);
           fflush(out);
           break;
         }
@@ -248,12 +265,12 @@ void *ui_processing_thread(void * tmp)
           fprintf(out,"Total Page Fault Count:\t%lu\n", StatsGetStat(PAGE_FAULTS));
           fprintf(out,"Zero Page Count:\t%lu\n", StatsGetStat(ZEROPAGES));
           fprintf(out,"Placed Data Page Count:\t%lu\n", StatsGetStat(PLACED_PAGES));
+          fprintf(out,"Zero Pages Encountered:\t%lu\n", StatsGetStat(WRITES_SKIPPED_ZERO));
           fprintf(out,"Page Eviction Count:\t%lu\n", StatsGetStat(PAGES_EVICTED));
           fprintf(out,"Cache Hit Count:\t%lu\n", StatsGetStat(CACHE_HIT));
           fprintf(out,"Cache Miss Count:\t%lu\n", StatsGetStat(CACHE_MISS));
           fprintf(out,"Cache Hit Percentage:\t%lu\n", StatsGetStat(CACHE_HITRATIO));
           fprintf(out,"Writes Avoided:\t\t%lu\n", StatsGetStat(WRITES_AVOIDED));
-          fprintf(out,"Zero Pages Left:\t%lu\n", StatsGetStat(WRITES_SKIPPED_ZERO));
           fprintf(out,"Invalid Pages Dropped:\t%lu\n", StatsGetStat(WRITES_SKIPPED_INVALID));
           fprintf(out,"Page Fault Rate:\t%f\n", StatsGetRate());
 

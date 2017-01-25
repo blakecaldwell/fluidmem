@@ -14,7 +14,9 @@
  ****/
 #ifndef USERFAULT_H
 #define USERFAULT_H
+
 #include <linux/userfaultfd.h>
+#include <externRAMClientWrapper.h>
 #include <usage.h>
 
 #include <stdbool.h>
@@ -79,14 +81,17 @@ int evict_page(int ufd, void * dst, void * src);
 int evict_to_externram(int ufd, void * pageaddr);
 int read_from_externram(int ufd, void * pageaddr);
 int evict_to_externram_multi(int size);
+static inline int delete_from_externram(int ufd, externRAMClient *client, void * pageaddr);
 int getExternRAMUsage(ServerUsage ** usage);
 
 int resizeLRUBuffer(int size);
 int purgeDeadUpids(int ** ufd_list_ptr);
-int flush_lru(int ufd, int flush_or_delete);
-int flush_buffers(int ufd);
+int flush_ufd(int ufd, externRAMClient *client);
+int flush_buffers(int ufd, externRAMClient *client, int flush_or_delete);
 int listPids(uint32_t ** pid_list_ptr);
 int removePid(uint32_t pidToRemove);
+int remove_upid(uint64_t upid);
+void flush_write_list(void);
 
 /* clean up locks */
 void clean_up_lock();

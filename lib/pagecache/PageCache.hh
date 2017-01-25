@@ -38,7 +38,7 @@ public:
     virtual void                invalidatePageCache( uint64_t hashcode, int fd ){};
     virtual void                addPageHashNode( uint64_t hashcode, int fd, int ownership ){};
     virtual void                storePagesInPageCache( uint64_t * hashcodes, int fd, int num_pages, char ** bufs, int * lengths){};
-    virtual uint64_t *          removeUFDFromPageCache(int fd, int * numPages){};
+    virtual void                removeUFDFromPageCache(int fd, int * numPages){};
     virtual uint64_t *          removeUFDFromPageHash(int fd, int * numPages){};
 
 //protected:
