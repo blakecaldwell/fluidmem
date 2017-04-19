@@ -30,6 +30,7 @@
 #include <upid.h>
 #include <threaded_io.h>
 #include <sys/user.h> /* for PAGE_SIZE */
+#include <buffer_allocator_array.h>
 
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
 char* zeroPage;
@@ -207,12 +208,19 @@ inline void PageCacheImpl::changeOwnershipWithItr( page_hash::iterator itr, int 
 int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf )
 {
   log_trace_in("%s", __func__);
-
   int size = 0;
+  readPageIfInPageCache_top( hashcode, fd, buf );
+  size = readPageIfInPageCache_bottom( hashcode, fd, buf );
+  log_trace_out("%s", __func__);
+  return size;
+}
+
+void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void ** buf )
+{
+  log_trace_in("%s", __func__);
 
   static uint64_t prevAddr = 0; // previously accessed address
   static int numConseqAcc = 0; // number of consequtive accesses
-  declare_timers();
 
   if(prevAddr + PAGE_SIZE == hashcode)
     numConseqAcc++;
@@ -233,17 +241,15 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
     StatsIncrCacheHit_notlocked();
 #endif
 
-    // If the page is in the cache, return the page in cache
-    List::iterator itr2 = pageCache.find( hashcode, fd );
-    if( itr2!=pageCache.findEnd() )
-    {
-      memcpy(*buf, itr2->address, itr2->size );
-      size = itr2->size;
-      free( (void*)itr2->address );
+#ifdef THREADED_REINIT
+    *buf = get_tmp_page(buf_readpage);
+#else
+    *buf = get_local_tmp_page();
+#endif
+    if (!*buf) {
+      log_err("failed to get read tmp page");
+      return;
     }
-    pageCache.erase( hashcode, fd );
-    changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
-    log_debug("%s: Cache hit for page %lx fd %d.", __func__, hashcode, fd);
   }
   else if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_EXTERNRAM )
   {
@@ -252,49 +258,53 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
     StatsIncrCacheMiss_notlocked();
 #endif
 
+#ifdef THREADED_REINIT
+    *buf = get_tmp_page(buf_readpage);
+#else
+    *buf = get_local_tmp_page();
+#endif
+    if (!*buf) {
+      log_err("failed to get read tmp page");
+      return;
+    }
+
     // If the page is in externRAM, return the page in externRAM
     if( !enable_prefetch )
     {
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
       if( itr->second->is_zeropage==true )
       {
-        log_debug("%s: Skipping reading the page %lx fd %d from externRAM.", __func__, hashcode, fd);
       }
       else
       {
 #endif
         struct externRAMClient *client = get_client_by_fd(fd);
         if (client) {
-          start_timing_bucket(start, READ_PAGE);
-          size = readPage( client, hashcode, *buf );
-          stop_timing(start, end, READ_PAGE);
+          start_timing_bucket(g_start, READ_PAGE);
+#ifdef ASYNREAD
+          readPage_top( client, hashcode, *buf );
+#endif
 	}
         else
           log_err("%s: failed to read page %lx for invalid fd %d", __func__, hashcode, fd);
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
       }
 #endif
-      changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
     }
     else
     {
-      uint64_t keys[prefetch_size+1];
-      void * bufs[prefetch_size+1];
-      int lengths[prefetch_size+1];
-      int numPrefetch = 0;
       float avgSequentialAccessNum = 10;
       int i=1;
+      numPrefetch = 0;
 
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
       if( itr->second->is_zeropage==true )
       {
-        log_debug("%s: Skipping reading the all-zero page %lx fd %d from externRAM.", __func__, hashcode, fd);
-        changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
-        goto read_page_if_in_page_cache_out;
+        goto read_page_if_in_page_cache_out_top;
       }
 #endif
-      memset( bufs, 0, sizeof(bufs) );
-      keys[0] = hashcode;
+      memset( bufs_for_mread, 0, sizeof(bufs_for_mread) );
+      keys_for_mread[0] = hashcode;
 #if defined(THREADED_WRITE_TO_EXTERNRAM) || defined(THREADED_PREFETCH)
       log_lock("%s: unlocking list_lock", __func__);
       pthread_mutex_lock(&list_lock);
@@ -334,7 +344,7 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
 #ifdef THREADED_PREFETCH
           add_prefetch_info( fd, testaddr );
 #else
-          keys[numPrefetch+1] = testaddr;
+          keys_for_mread[numPrefetch+1] = testaddr;
 #endif
           numPrefetch++;
           log_debug("%s: Prefetching a page %lx fd %d.", __func__, testaddr, fd);
@@ -357,32 +367,132 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
         if( waiting )
           sem_post(&prefetcher_sem);
 
-        start_timing_bucket(start, READ_PAGE);
+        start_timing_bucket(g_start, READ_PAGE);
+#ifdef ASYNREAD
+        readPage_top( client, hashcode, *buf );
+#endif
+#else
+        start_timing_bucket(g_start, READ_PAGES);
+#ifdef ASYNREAD
+        readPages_top( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
+#endif
+#endif
+      }
+    }
+  }
+  else if( itr==pagehash.end() )
+  {
+
+    // increment the page cache miss stat
+#ifdef MONITORSTATS
+    StatsIncrCacheMiss_notlocked();
+#endif
+  }
+
+read_page_if_in_page_cache_out_top:
+
+  log_trace_out("%s", __func__);
+}
+
+int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void ** buf )
+{
+  log_trace_in("%s", __func__);
+
+  int size = 0;
+
+  char t[sizeof(uint64_t)+sizeof(int)];
+  *((uint64_t*) &t[0]) = hashcode;
+  *((int*) &t[sizeof(uint64_t)]) = fd;
+  std::string k(t,sizeof(uint64_t)+sizeof(int));
+  page_hash::iterator itr = pagehash.find(k);
+  if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_PAGE_CACHE )
+  {
+    // If the page is in the cache, return the page in cache
+    List::iterator itr2 = pageCache.find( hashcode, fd );
+    if( itr2!=pageCache.findEnd() )
+    {
+      memcpy(*buf, itr2->address, itr2->size );
+      size = itr2->size;
+      free( (void*)itr2->address );
+    }
+    pageCache.erase( hashcode, fd );
+    changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
+    log_debug("%s: Cache hit for page %lx fd %d.", __func__, hashcode, fd);
+  }
+  else if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_EXTERNRAM )
+  {
+    // If the page is in externRAM, return the page in externRAM
+    if( !enable_prefetch )
+    {
+#ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
+      if( itr->second->is_zeropage==true )
+      {
+        log_debug("%s: Skipping reading the page %lx fd %d from externRAM.", __func__, hashcode, fd);
+      }
+      else
+      {
+#endif
+        struct externRAMClient *client = get_client_by_fd(fd);
+        if (client) {
+#ifdef ASYNREAD
+          size = readPage_bottom( client, hashcode, *buf );
+#else 
+          size = readPage( client, hashcode, *buf );
+#endif
+          stop_timing(g_start, g_end, READ_PAGE);
+	}
+        else
+          log_err("%s: failed to read page %lx for invalid fd %d", __func__, hashcode, fd);
+#ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
+      }
+#endif
+      changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
+    }
+    else
+    {
+#ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
+      if( itr->second->is_zeropage==true )
+      {
+        log_debug("%s: Skipping reading the all-zero page %lx fd %d from externRAM.", __func__, hashcode, fd);
+        changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
+        goto read_page_if_in_page_cache_out_bottom;
+      }
+#endif
+      struct externRAMClient *client = get_client_by_fd(fd);
+      if (client) {
+#ifdef THREADED_PREFETCH
+#ifdef ASYNREAD
+        size = readPage_bottom( client, hashcode, *buf );
+#else
         size = readPage( client, hashcode, *buf );
-        stop_timing(start, end, READ_PAGE);
+#endif
+        stop_timing(g_start, g_end, READ_PAGE);
 
         changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
 #else
-        start_timing_bucket(start, READ_PAGES);
-        readPages( client, keys, numPrefetch+1, (void**) bufs, lengths );
-        stop_timing(start, end, READ_PAGES);
+#ifdef ASYNREAD
+        readPages_bottom( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
+#else
+        readPages( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
+#endif
+        stop_timing(g_start, g_end, READ_PAGES);
 
-        if( bufs[0]!=NULL )
+        if( bufs_for_mread[0]!=NULL )
         {
-          size = lengths[0];
-          memcpy(*buf, bufs[0], size );
+          size = lengths_for_mread[0];
+          memcpy(*buf, bufs_for_mread[0], size );
           changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
-          free( bufs[0] );
+          free( bufs_for_mread[0] );
         }
 #ifdef DEBUG
         for(int i=0; i<numPrefetch+1; i++)
         {
-          log_debug("%s: multiRead [%d] bufs %lx lenths %d", __func__, i,(uint64_t)bufs[i], lengths[i]);
+          log_debug("%s: multiRead [%d] bufs_for_mread %lx lenths_for_mread %d", __func__, i,(uint64_t)bufs_for_mread[i], lengths_for_mread[i]);
         }
 #endif
         if( numPrefetch>0 )
         {
-          storePagesInPageCache(&keys[1], fd, numPrefetch, (char**) &bufs[1], &lengths[1]);
+          storePagesInPageCache(&keys_for_mread[1], fd, numPrefetch, (char**) &bufs_for_mread[1], &lengths_for_mread[1]);
         }
 #endif
       }
@@ -393,16 +503,10 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
   }
   else if( itr==pagehash.end() )
   {
-
-    // increment the page cache miss stat
-#ifdef MONITORSTATS
-    StatsIncrCacheMiss_notlocked();
-#endif
-
     // zeropage if the page is not either in cache or externRAM
-    start_timing_bucket(start, INSERT_PAGE_HASH_NODE);
+    start_timing_bucket(g_start, INSERT_PAGE_HASH_NODE);
     addPageHashNode( hashcode, fd, OWNERSHIP_APPLICATION);
-    stop_timing(start, end, INSERT_PAGE_HASH_NODE);
+    stop_timing(g_start, g_end, INSERT_PAGE_HASH_NODE);
 
     size = 0;
     log_debug("%s: Cache miss! New page %lx fd %d.", __func__, hashcode, fd);
@@ -412,12 +516,11 @@ int PageCacheImpl::readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf
     log_err("%s: Pagehash error! should not happen!", __func__);
   }
 
-read_page_if_in_page_cache_out:
+read_page_if_in_page_cache_out_bottom:
 
   log_trace_out("%s", __func__);
   return size;
 }
-
 
 void PageCacheImpl::updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool zeroPage)
 {

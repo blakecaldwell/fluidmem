@@ -27,6 +27,9 @@ endif
 if LOCK_DEBUG
 EXTERNRAM_FLAGS += -DLOCK_DEBUG
 endif
+if ASYNREAD
+EXTERNRAM_FLAGS += -DASYNREAD
+endif
 
 libexternramClientImpl_la_SOURCES = externRAMClient.hh
 libexternramClientImpl_la_CPPFLAGS =
@@ -85,4 +88,7 @@ AM_CPPFLAGS += -DTHREADED_PREFETCH
 endif
 if LOCK_DEBUG
 AM_CPPFLAGS += -DLOCK_DEBUG
+endif
+if ASYNREAD
+AM_CPPFLAGS += -DASYNREAD
 endif

@@ -70,6 +70,21 @@ extern "C" {
     c->multiRead(keys, num_prefetch, recvBufs, lengths);
   }
 
+#ifdef ASYNREAD
+  void readPage_top(externRAMClient *c, uint64_t key, void * recvBuf) {
+    c->read_top(key,recvBuf);
+  }
+  int readPage_bottom(externRAMClient *c, uint64_t key, void * recvBuf) {
+    return c->read_bottom(key,recvBuf);
+  }
+  void readPages_top(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths) {
+    c->multiRead_top(keys, num_prefetch, recvBufs, lengths);
+  }
+  int readPages_bottom(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths) {
+    return c->multiRead_bottom(keys, num_prefetch, recvBufs, lengths);
+  }
+#endif
+
   bool isFull(externRAMClient *c, uint64_t key) {
     return c->isFull(key);
   }

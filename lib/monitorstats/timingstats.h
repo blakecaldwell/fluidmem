@@ -8,7 +8,7 @@
 #ifndef TIMINGSTATS_H
 #define TIMINGSTATS_H
 
-#define NUM_BUCKETS 23
+#define NUM_BUCKETS 24
 #define MAX_BUCKET_SLOTS 8192
 
 /*
@@ -37,23 +37,24 @@ typedef enum _BucketType
   HANDLE_USERFAULT_ZERO_EVICT, // 0x0000008
   HANDLE_USERFAULT_MOVE,       // 0x0000010
   HANDLE_USERFAULT_MOVE_EVICT, // 0x0000020
-  HANDLE_USERFAULT_ALL,        // 0x0000040
-  EVICT_TO_EXTERNRAM,          // 0x0000080
-  READ_FROM_EXTERNRAM,         // 0x0000100
-  READ_PAGES,                  // 0x0000200
-  READ_PAGE,                   // 0x0000400
-  WRITE_PAGES,                 // 0x0000800
-  WRITE_PAGE,                  // 0x0001000
-  UFFD_ZEROPAGE,               // 0x0002000
-  UFFD_COPY,                   // 0x0004000
-  UFFD_REMAP,                  // 0x0008000
-  UFFD_WAKE,                   // 0x0010000
-  INSERT_LRU_CACHE_NODE,       // 0x0020000
-  INSERT_PAGE_HASH_NODE,       // 0x0040000
-  UPDATE_PAGE_CACHE,           // 0x0080000
-  READ_VIA_PAGE_CACHE,         // 0x0100000
-  STORE_PAGES_IN_PAGE_CACHE,   // 0x0200000
-  ZEROPAGE_COMPARE,            // 0x0400000
+  HANDLE_USERFAULT_ASYN_EVICT, // 0x0000040
+  HANDLE_USERFAULT_ALL,        // 0x0000080
+  EVICT_TO_EXTERNRAM,          // 0x0000100
+  READ_FROM_EXTERNRAM,         // 0x0000200
+  READ_PAGES,                  // 0x0000400
+  READ_PAGE,                   // 0x0000800
+  WRITE_PAGES,                 // 0x0001000
+  WRITE_PAGE,                  // 0x0002000
+  UFFD_ZEROPAGE,               // 0x0004000
+  UFFD_COPY,                   // 0x0008000
+  UFFD_REMAP,                  // 0x0010000
+  UFFD_WAKE,                   // 0x0020000
+  INSERT_LRU_CACHE_NODE,       // 0x0040000
+  INSERT_PAGE_HASH_NODE,       // 0x0080000
+  UPDATE_PAGE_CACHE,           // 0x0100000
+  READ_VIA_PAGE_CACHE,         // 0x0200000
+  STORE_PAGES_IN_PAGE_CACHE,   // 0x0400000
+  ZEROPAGE_COMPARE,            // 0x0800000
 } BucketType;
 
 typedef struct _TimingBucket
@@ -87,6 +88,7 @@ static inline void _TimingStatsInitReverseBuckets()
   allocate_and_copy("HANDLE_USERFAULT_ZERO_EVICT", &reverse_buckets[HANDLE_USERFAULT_ZERO_EVICT]);
   allocate_and_copy("HANDLE_USERFAULT_MOVE", &reverse_buckets[HANDLE_USERFAULT_MOVE]);
   allocate_and_copy("HANDLE_USERFAULT_MOVE_EVICT", &reverse_buckets[HANDLE_USERFAULT_MOVE_EVICT]);
+  allocate_and_copy("HANDLE_USERFAULT_ASYN_EVICT", &reverse_buckets[HANDLE_USERFAULT_ASYN_EVICT]);
   allocate_and_copy("HANDLE_USERFAULT_ALL", &reverse_buckets[HANDLE_USERFAULT_ALL]);
   allocate_and_copy("EVICT_TO_EXTENRAM", &reverse_buckets[EVICT_TO_EXTERNRAM]);
   allocate_and_copy("READ_FROM_EXTERNRAM", &reverse_buckets[READ_FROM_EXTERNRAM]);
@@ -184,7 +186,7 @@ static inline void TimingStatsInitGlobals()
 
   max_bucket_slots = MAX_BUCKET_SLOTS;
 
-  buckets_mask = ((1L<<23) - 1);
+  buckets_mask = ((1L<<NUM_BUCKETS) - 1);
 
   log_trace_out("%s", __func__);
 }
@@ -387,7 +389,7 @@ static inline void StatsDumpBuckets(FILE *out)
 {
   log_trace_in("%s", __func__);
   int i;
-  int order[NUM_BUCKETS] = { ZEROPAGE_COMPARE, UPDATE_PAGE_CACHE, INSERT_PAGE_HASH_NODE, INSERT_LRU_CACHE_NODE, STORE_PAGES_IN_PAGE_CACHE, UFFD_WAKE, UFFD_ZEROPAGE, HANDLE_USERFAULT_ZERO, UFFD_REMAP, UFFD_COPY, READ_PAGE, READ_VIA_PAGE_CACHE, HANDLE_USERFAULT_COPY, HANDLE_USERFAULT_MOVE, WRITE_PAGE, EVICT_TO_EXTERNRAM, READ_FROM_EXTERNRAM, HANDLE_USERFAULT_COPY_EVICT, HANDLE_USERFAULT_MOVE_EVICT, READ_PAGES, WRITE_PAGES };
+  int order[NUM_BUCKETS] = { ZEROPAGE_COMPARE, UPDATE_PAGE_CACHE, INSERT_PAGE_HASH_NODE, INSERT_LRU_CACHE_NODE, STORE_PAGES_IN_PAGE_CACHE, UFFD_WAKE, UFFD_ZEROPAGE, HANDLE_USERFAULT_ZERO, UFFD_REMAP, UFFD_COPY, READ_PAGE, READ_VIA_PAGE_CACHE, HANDLE_USERFAULT_COPY, HANDLE_USERFAULT_MOVE, WRITE_PAGE, EVICT_TO_EXTERNRAM, READ_FROM_EXTERNRAM, HANDLE_USERFAULT_COPY_EVICT, HANDLE_USERFAULT_MOVE_EVICT, HANDLE_USERFAULT_ASYN_EVICT, READ_PAGES, WRITE_PAGES };
 
   for(i = 0; i < 19; i++) {
     int b = order[i];

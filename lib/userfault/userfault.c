@@ -372,6 +372,11 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
         strcpy(timing_label, "MOVE_EVICT");
         bucket_index=5;
 #endif
+      case ASYN_PAGE:
+#ifdef TIMING
+        strcpy(timing_label, "ASYN_EVICT");
+        bucket_index=6;
+#endif
         break;
     }
 
@@ -461,7 +466,10 @@ int place_data_page(int ufd, void * dst, void * src) {
     log_debug("%s: src: %p, dst %p", __func__, src, dst);
   }
 
+#ifndef ASYNREAD
   ret = evict_if_needed(ufd, dst, COPY_PAGE);
+#endif
+
   // ret passed through in case this ufd needs to be removed from polling
 
 #ifdef MONITORSTATS
@@ -506,7 +514,10 @@ int place_zero_page(int ufd, void * dst) {
   }
 #endif
 
+#ifndef ASYNREAD
   ret = evict_if_needed(ufd, dst, ZERO_PAGE);
+#endif
+
   // ret passed through in case this ufd needs to be removed from polling
 
   log_trace_out("%s", __func__);
@@ -555,7 +566,10 @@ int move_page(int ufd, void * dst, void * src) {
   }
 #endif
 
-  ret = evict_if_needed(ufd, dst, ZERO_PAGE);
+#ifndef ASYNREAD
+  ret = evict_if_needed(ufd, dst, MOVE_PAGE);
+#endif
+
   // ret passed through in case this ufd needs to be removed from polling
 
   log_trace_out("%s", __func__);
@@ -990,16 +1004,7 @@ int read_from_externram(int ufd, void * pageaddr) {
   int length = -1;
   int ret = -1;
   int ret_munmap = -1;
-#ifdef THREADED_REINIT
-  read_tmp_page = get_tmp_page(buf_readpage);
-#else
-  read_tmp_page = get_local_tmp_page();
-#endif
-  if (!read_tmp_page) {
-    log_err("failed to get read tmp page");
-    return -1;
-  }
-
+  bool toClean = true;
 #ifdef MONITORSTATS
   StatsIncrPageFault_notlocked();
 #endif
@@ -1083,13 +1088,18 @@ int read_from_externram(int ufd, void * pageaddr) {
     }
   }
 #endif
+
 #ifdef PAGECACHE
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
 
   start_timing_bucket(start, READ_VIA_PAGE_CACHE);
+#ifdef ASYNREAD
+  readPageIfInPageCache_top(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+#else
   length = readPageIfInPageCache(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+#endif
   stop_timing(start, end, READ_VIA_PAGE_CACHE);
 
   log_lock("%s: unlocking pagecache_lock", __func__);
@@ -1097,14 +1107,57 @@ int read_from_externram(int ufd, void * pageaddr) {
   log_lock("%s: unlocked pagecache_lock", __func__);
 
 #else
+  // without page cache we don't know whether page has been seen before or not.
+  // we will have to allocate a buffer for the read return value no matter what
   struct externRAMClient *client = get_client_by_fd(ufd);
   if (client) {
+#ifdef THREADED_REINIT
+    read_tmp_page = get_tmp_page(buf_readpage);
+#else
+    read_tmp_page = get_local_tmp_page();
+#endif
+    if (!read_tmp_page) {
+      log_err("failed to get read tmp page");
+      return -1;
+    }
+
     start_timing_bucket(start, READ_PAGE);
+#ifdef ASYNREAD
+    readPage_top(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
+#else
     length = readPage(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
+    stop_timing(start, end, READ_PAGE);
+#endif
+  }
+  else
+    log_err("%s: failed to read page %p for invalid fd %s", __func__, pageaddr, ufd);
+#endif
+
+#ifdef ASYNREAD
+  int ret2 = 0;
+  ret2 = evict_if_needed(ufd, pageaddr, ASYN_PAGE);
+
+#ifdef PAGECACHE
+  log_lock("%s: locking pagecache_lock", __func__);
+  pthread_mutex_lock(&pagecache_lock);
+  log_lock("%s: locked pagecache_lock", __func__);
+
+  length = readPageIfInPageCache_bottom(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+  stop_timing(start, end, READ_VIA_PAGE_CACHE);
+
+  log_lock("%s: unlocking pagecache_lock", __func__);
+  pthread_mutex_unlock(&pagecache_lock);
+  log_lock("%s: unlocked pagecache_lock", __func__);
+
+#else
+  // already got client
+  if (client) {
+    length = readPage_bottom(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
     stop_timing(start, end, READ_PAGE);
   }
   else
     log_err("%s: failed to read page %p for invalid fd %s", __func__, pageaddr, ufd);
+#endif
 #endif
 
   if (length == PAGE_SIZE) {
@@ -1113,26 +1166,42 @@ int read_from_externram(int ufd, void * pageaddr) {
       log_err("%s: place_data_page", __func__);
     }
     // ret = ufd if page eviction skipped
-  }
-  else {
+  } else if (length == 0){
     // place zero page
+#ifdef PAGECACHE
+    toClean = false;
+#endif
     ret = place_zero_page(ufd, (void *)(uintptr_t)pageaddr);
     if (ret < 0) {
       log_err("%s: place_zero_page", __func__);
     }
     // ret = ufd if page eviction skipped
+  } else {
+    log_err("%s: we don't know how to handle a read of length %s", __func__, length);
   }
 #ifdef MONITORSTATS
   StatsSetLastFaultTime();
 #endif
 
   // cleanup
+  if(toClean) {
 #ifdef THREADED_REINIT
-  ret_munmap = return_free_page(buf_readpage, read_tmp_page);
+    ret_munmap = return_free_page(buf_readpage, read_tmp_page);
 #else
-  ret_munmap = munmap(read_tmp_page, PAGE_SIZE);
+    ret_munmap = munmap(read_tmp_page, PAGE_SIZE);
 #endif
-  log_debug("munmap to %p in %s (ret %d)", read_tmp_page, __func__, ret_munmap);
+    if (ret_munmap < 0) {
+      log_err("munmap to %p in %s (ret %d)", read_tmp_page, __func__, ret_munmap);
+    }
+    else {
+      log_debug("munmap to %p in %s (ret %d)", read_tmp_page, __func__, ret_munmap);
+    }
+  }
+
+#ifdef ASYNREAD
+  // ret2 = ufd if page eviction skipped
+  ret = ret2;
+#endif
 
   log_trace_out("%s", __func__);
   return ret;

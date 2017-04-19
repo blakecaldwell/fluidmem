@@ -33,6 +33,9 @@ endif
 if TIMING
 PAGECACHE_FLAGS += -DTIMING
 endif
+if ASYNREAD
+PAGECACHE_FLAGS += -DASYNREAD
+endif
 
 noinst_LTLIBRARIES = libPageCacheImpl.la
 
@@ -75,4 +78,7 @@ AM_CPPFLAGS += -DLOCK_DEBUG
 endif
 if TIMING
 AM_CPPFLAGS += -DTIMING
+endif
+if ASYNREAD
+AM_CPPFLAGS += -DASYNREAD
 endif

@@ -26,6 +26,16 @@ extern "C" {
   {
     return pageCache->readPageIfInPageCache( hashcode, ufd, buf );
   }
+#ifdef ASYNREAD
+  void readPageIfInPageCache_top( PageCache * pageCache, int ufd, uint64_t hashcode, void** buf )
+  {
+    pageCache->readPageIfInPageCache_top( hashcode, ufd, buf );
+  }
+  int readPageIfInPageCache_bottom( PageCache * pageCache, int ufd, uint64_t hashcode, void** buf )
+  {
+    return pageCache->readPageIfInPageCache_bottom( hashcode, ufd, buf );
+  }
+#endif
   void updatePageCacheAfterWrite( PageCache * pageCache, int ufd, uint64_t hashcode )
   {
     pageCache->updatePageCacheAfterWrite( hashcode, ufd, false );

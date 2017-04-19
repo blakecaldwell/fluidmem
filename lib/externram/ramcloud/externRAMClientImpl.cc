@@ -24,6 +24,7 @@
 #include <sys/user.h> /* for PAGE_SIZE */
 #include <MultiRead.h>
 #include <ClientException.h>
+#include <Dispatch.h>
 
 using namespace RAMCloud;
 string locator;
@@ -64,7 +65,7 @@ externRAMClientImpl::externRAMClientImpl()
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   myClient_write = new RamCloud(&context_write,locator.c_str());
 #endif
-#ifdef THREADED_PREFETCH
+#if defined(THREADED_PREFETCH) || defined(ASYNREAD)
   myClient_multiread = new RamCloud(&context_multiread,locator.c_str());
 #endif
 
@@ -76,7 +77,7 @@ externRAMClientImpl::externRAMClientImpl()
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   tableId_write = myClient_write->getTableId(clientId);
 #endif
-#ifdef THREADED_PREFETCH
+#if defined(THREADED_PREFETCH) || defined(ASYNREAD)
   tableId_multiread = myClient_multiread->getTableId(clientId);
 #endif
   log_trace_out("%s", __func__);
@@ -239,7 +240,7 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
 
   RAMCloud::RamCloud * client = myClient;
   uint64_t tid = tableId;
-#ifdef THREADED_PREFETCH
+#if defined(THREADED_PREFETCH) || defined(ASYNREAD)
   client = myClient_multiread;
   tid = tableId_multiread;
 #endif
@@ -328,6 +329,165 @@ int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void **
   log_trace_out("%s", __func__);
   return ret;
 }
+
+#ifdef ASYNREAD
+/*
+ *** externRAMClientImpl::read_top() ***
+ *
+ * read the data associated with a given key in RAMCloud asynchronously
+ *
+ @ hashcode: unique key
+ @ recvBuf:
+ -> returns: void
+ **********************************************
+ */
+void externRAMClientImpl::read_top(uint64_t hashcode, void * recvBuf) {
+  log_trace_in("%s", __func__);
+
+  try {
+    read_for_asynread = new ReadRpc(myClient, tableId, &hashcode, sizeof(uint64_t), &buf_for_asynread);
+  } catch (RAMCloud::ClientException& e) {
+    if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
+      log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  catch (RAMCloud::Exception& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+
+  log_trace_out("%s", __func__);
+}
+
+/*
+ *** externRAMClientImpl::read_bottom() ***
+ *
+ * read the data associated with a given key in RAMCloud asynchronously
+ *
+ @ hashcode: unique key
+ @ recvBuf:
+ -> returns: length of recvBuf
+ **********************************************
+ */
+int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
+  log_trace_in("%s", __func__);
+  int length=0;
+
+  try {
+    while (!read_for_asynread->isReady()) {
+      context.dispatch->poll();
+    }
+    read_for_asynread->wait();
+
+    length = buf_for_asynread.size();
+    /* don't risk overflowing recvBuf */
+    if (length > PAGE_SIZE)
+      length = PAGE_SIZE;
+    buf_for_asynread.copy(0,length,recvBuf);
+  } catch (RAMCloud::ClientException& e) {
+    if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
+      log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  catch (RAMCloud::Exception& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  if( read_for_asynread )
+    delete read_for_asynread;
+  log_trace_out("%s", __func__);
+  return length;
+}
+
+/*
+ *** externRAMClientImpl::MultiRead_top() ***
+ *
+ * read the data associated with one key in RAMCloud and prefetch
+ * additional keys
+ *
+ @ hashcodes: pointer to an array of unique keys
+ @ num_prefetch: number of keys to prefetch with spatial locality
+ @ recvBufs: pointer to an array of receive buffers
+ @ lengths: pointer to an array of lengths to be recoreded by this function
+ -> returns: void
+ **********************************************
+ */
+void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  log_trace_in("%s", __func__);
+
+  RAMCloud::RamCloud * client = myClient;
+  uint64_t tid = tableId;
+  client = myClient_multiread;
+  tid = tableId_multiread;
+  try {
+    /* Create a new container for all RPCs associated with this key */
+    for( int i=0; i<num_prefetch; i++ )
+    {
+      MultiReadObject r(tid, &hashcodes[i],
+                                 sizeof(uint64_t), &buf_for_asynmread[i] );
+      requests_for_asynmread[i] = r;
+      requests_ptr_for_asynmread[i] = &(requests_for_asynmread[i]);
+    }
+    read_for_asynmread = new MultiRead( client, &requests_ptr_for_asynmread[0], num_prefetch);
+  }
+  catch (RAMCloud::ClientException& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  catch (RAMCloud::Exception& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+
+  log_trace_out("%s", __func__);
+}
+
+/*
+ *** externRAMClientImpl::MultiRead_bottom() ***
+ *
+ * read the data associated with one key in RAMCloud and prefetch
+ * additional keys
+ *
+ @ hashcodes: pointer to an array of unique keys
+ @ num_prefetch: number of keys to prefetch with spatial locality
+ @ recvBufs: pointer to an array of receive buffers
+ @ lengths: pointer to an array of lengths to be recoreded by this function
+ -> returns: void
+ **********************************************
+ */
+int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  log_trace_in("%s", __func__);
+
+  RAMCloud::RamCloud * client = myClient;
+  uint64_t tid = tableId;
+#ifdef THREADED_PREFETCH
+  client = myClient_multiread;
+  tid = tableId_multiread;
+#endif
+  try {
+    while (!read_for_asynmread->isReady()) {
+      context_multiread.dispatch->poll();
+    }
+    read_for_asynmread->wait();
+    for( int j=0; j<num_prefetch; j++ )
+    {
+      if( requests_ptr_for_asynmread[j]->status != STATUS_OK )
+      {
+        log_err("RAMCloud error: cannot read a value for key %lx", hashcodes[j]);
+        continue;
+      }
+      int length = buf_for_asynmread[j].get()->getObject()->getValueLength();
+      recvBufs[j] = malloc(length);
+      memcpy( recvBufs[j], buf_for_asynmread[j].get()->getValue(), length );
+      lengths[j] = length;
+    }
+  }
+  catch (RAMCloud::ClientException& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  catch (RAMCloud::Exception& e) {
+    log_err("RAMCloud exception: %s", e.str().c_str());
+  }
+  if( read_for_asynmread )
+    delete read_for_asynmread;
+  log_trace_out("%s", __func__);
+  return 0;
+}
+#endif
 
 /*
  *** externRAMClientImpl::MultiReadTest() ***

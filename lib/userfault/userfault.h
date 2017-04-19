@@ -34,6 +34,7 @@
 #define ZERO_PAGE 0
 #define COPY_PAGE 1
 #define MOVE_PAGE 2
+#define ASYN_PAGE 3
 
 /*
  * Global variables

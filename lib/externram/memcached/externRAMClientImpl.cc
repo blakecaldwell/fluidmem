@@ -287,6 +287,106 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
   return 0;
 }
 
+#ifdef ASYNREAD
+void externRAMClientImpl::read_top(uint64_t key, void * value) {
+  log_trace_in("%s", __func__);
+  log_trace_out("%s", __func__);
+  return;
+}
+
+int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
+  log_trace_in("%s", __func__);
+  size_t length = 0;
+  char * buf = NULL;
+  uint32_t flags = 0;
+  memcached_return_t error;
+  char hashcodeStr[20] = "";
+
+  sprintf( hashcodeStr, "%lx", hashcode );
+  buf = memcached_get( myClient, hashcodeStr, strlen(hashcodeStr), &length, &flags, &error );
+  switch (error) {
+    case MEMCACHED_SUCCESS:
+      /* don't risk overflowing recvBuf */
+      if (length > PAGE_SIZE)
+      length = PAGE_SIZE;
+      memcpy(recvBuf, buf, length);
+      free(buf);
+      break;
+    case MEMCACHED_NOTFOUND:
+      log_err("externRAMClientImpl::memcached error, code: %u, string: %s", error, memcached_strerror(myClient, error));
+      break;
+    default:
+      break;
+  }
+  log_trace_out("%s", __func__);
+  return (int) length;
+}
+
+void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  log_trace_in("%s", __func__);
+  log_trace_out("%s", __func__);
+  return;
+}
+
+int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  log_trace_in("%s", __func__);
+  size_t key_length[num_prefetch];
+  memcached_return_t error;
+  memcached_return_t rc;
+  uint32_t flags;
+  char return_key[MEMCACHED_MAX_KEY];
+  size_t return_key_length;
+  char *return_value;
+  size_t return_value_length;
+  unsigned int i = 0;
+  char hashcodeStr[num_prefetch][20];
+  char * hashcodeStr2[num_prefetch];
+  memcached_st * client = myClient;
+#ifdef THREADED_PREFETCH
+  client = myClient_multiread;
+#endif
+
+  memset( &hashcodeStr, 0, sizeof(hashcodeStr) );
+  for( int j=0; j<num_prefetch; j++ )
+  {
+    sprintf( hashcodeStr[j], "%lx", hashcodes[j] );
+    key_length[j] = strlen(hashcodeStr[j]);
+    hashcodeStr2[j] = (char*) malloc( key_length[j]+1 );
+    sprintf( hashcodeStr2[j], "%lx", hashcodes[j] );
+  }
+  error = memcached_mget( client, hashcodeStr2, key_length, num_prefetch );
+
+  if (error == MEMCACHED_SUCCESS)
+  {
+    while ((return_value = memcached_fetch( client, return_key, &return_key_length,
+                                      &return_value_length, &flags, &rc)))
+    {
+      if( rc == MEMCACHED_SUCCESS && return_value != NULL )
+      {
+        if( memcmp(return_key,hashcodeStr2[i],return_key_length)!=0 )
+        {
+          log_err("memcached could not retrieve the value for key %lx", hashcodes[i]);
+        }
+        recvBufs[i] = return_value;
+        lengths[i] = return_value_length;
+      }
+      i++;
+    }
+  }
+  else
+  {
+    log_err("externRAMClientImpl::memcached error, code: %ud, string: %s", error, memcached_strerror(client, error));
+  }
+  for( int j=0; j<num_prefetch; j++ )
+  {
+    free( hashcodeStr2[j] );
+  }
+
+  log_trace_out("%s", __func__);
+  return 0;
+}
+#endif
+
 /*
  *** externRAMClientImpl::MultiWrite() ***
  *

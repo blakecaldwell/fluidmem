@@ -206,6 +206,17 @@ esac],
 [enable_affinity=true])
 AM_CONDITIONAL(ENABLE_AFFINITY, test x"$enable_affinity" = x"true")
 
+AC_ARG_ENABLE(asynread,
+AS_HELP_STRING([--enable-asynread],
+               [enable the asynchronous read operation, default: no]),
+[case "${enableval}" in
+             yes) asynread=true ;;
+             no)  asynread=false ;;
+             *)   AC_MSG_ERROR([bad value ${enableval} for --enable-asynread]) ;;
+esac],
+[asynread=false])
+AM_CONDITIONAL(ASYNREAD, test x"$asynread" = x"true")
+
 if test x"$threadedprefetch" = x"true" && test x"$pagecache" != x"true"
 then
   AC_MSG_ERROR([${threadedprefetch}${pagecache} pagecache should be enabled to enable the threaded prefetch]) ;

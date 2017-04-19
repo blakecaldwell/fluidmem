@@ -47,6 +47,12 @@ public:
   virtual int         read(uint64_t key, void * value);
   virtual int         multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
   virtual int         multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths);
+#ifdef ASYNREAD
+  virtual void        read_top(uint64_t key, void * value);
+  virtual int         read_bottom(uint64_t key, void * value);
+  virtual void        multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
+  virtual int         multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
+#endif
   virtual int         remove(uint64_t key);
 
 };

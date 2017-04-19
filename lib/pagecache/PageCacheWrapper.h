@@ -27,6 +27,10 @@ typedef struct PageCache PageCache;
 PageCache* newPageCache(struct LRUBuffer *lru);
 
 int readPageIfInPageCache( PageCache * pageCache, int ufd, uint64_t hashcode, void** buf );
+#ifdef ASYNREAD
+void readPageIfInPageCache_top( PageCache * pageCache, int ufd, uint64_t hashcode, void** buf );
+int readPageIfInPageCache_bottom( PageCache * pageCache, int ufd, uint64_t hashcode, void** buf );
+#endif
 void updatePageCacheAfterWrite( PageCache * pageCache, int ufd, uint64_t hashcode);
 void updatePageCacheAfterSkippedWrite( PageCache * pageCache, int ufd, uint64_t hashcode);
 void invalidatePageCache( PageCache * pageCache, int ufd, uint64_t hashcode );

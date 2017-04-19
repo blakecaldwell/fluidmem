@@ -133,24 +133,69 @@ int externRAMClientImpl::read(uint64_t key, void * value) {
   page_data page_value;
 
   log_debug("%s: reading page %p", __func__, key);
+  log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
+  log_lock("%s: locked noop_mutex", __func__);
   try {
     page_value = kv.at(key);
   }
   catch (const out_of_range& oor) {
+    log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
+    log_lock("%s: unlocked noop_mutex", __func__);
     log_debug("%s: read for key %p failed: not found", __func__, key);
     log_trace_out("%s", __func__);
     return 0;
   }
 
   memcpy(value, page_value, PAGE_SIZE);
+
+  log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
+  log_lock("%s: unlocked noop_mutex", __func__);
   log_debug("%s: retrieved key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, PAGE_SIZE));
 
   log_trace_out("%s", __func__);
   return PAGE_SIZE;
 }
+
+#ifdef ASYNREAD
+void externRAMClientImpl::read_top(uint64_t key, void * value) {
+  return;
+}
+
+int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
+  log_trace_in("%s", __func__);
+
+  page_data page_value;
+
+  log_debug("%s: reading page %p", __func__, key);
+
+  log_lock("%s: locking noop_mutex", __func__);
+  pthread_mutex_lock(&noop_mutex);
+  log_lock("%s: locked noop_mutex", __func__);
+  try {
+    page_value = kv.at(key);
+  }
+  catch (const out_of_range& oor) {
+    log_lock("%s: unlocking noop_mutex", __func__);
+    pthread_mutex_unlock(&noop_mutex);
+    log_lock("%s: unlocked noop_mutex", __func__);
+    log_debug("%s: read for key %p failed: not found", __func__, key);
+    log_trace_out("%s", __func__);
+    return 0;
+  }
+
+  memcpy(value, page_value, PAGE_SIZE);
+  log_lock("%s: unlocking noop_mutex", __func__);
+  pthread_mutex_unlock(&noop_mutex);
+  log_lock("%s: unlocked noop_mutex", __func__);
+  log_debug("%s: retrieved key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, PAGE_SIZE));
+
+  log_trace_out("%s", __func__);
+  return PAGE_SIZE;
+}
+#endif
 
 /*
  *** externRAMClientImpl::MultiRead() ***
@@ -168,9 +213,12 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
   int rc = num_prefetch;
 
   log_trace_in("%s", __func__);
+
   for( int i=0; i<num_prefetch; i++ )
   {
     recvBufs[i] = malloc(PAGE_SIZE);
+    if (!recvBufs[i])
+      log_err("%s: failed to allocate multiread buffer", __func__);
     lengths[i] = read( hashcodes[i], recvBufs[i] );
     if (lengths[i] <= 0)
       rc--;
@@ -178,6 +226,36 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
   log_trace_out("%s", __func__);
   return rc;
 }
+
+#ifdef ASYNREAD
+void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  log_trace_in("%s", __func__);
+  for( int i=0; i<num_prefetch; i++ )
+  {
+    recvBufs[i] = malloc(PAGE_SIZE);
+    if (!recvBufs[i])
+      log_err("%s: failed to allocate multiread buffer", __func__);
+  }
+  log_trace_out("%s", __func__);
+  return;
+}
+
+int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
+  int rc = num_prefetch;
+
+  log_trace_in("%s", __func__);
+  pthread_mutex_lock(&noop_mutex);
+  for( int i=0; i<num_prefetch; i++ )
+  {
+    lengths[i] = read( hashcodes[i], recvBufs[i] );
+    if (lengths[i] <= 0)
+      rc--;
+  }
+  pthread_mutex_unlock(&noop_mutex);
+  log_trace_out("%s", __func__);
+  return rc;
+}
+#endif
 
 /*
  *** externRAMClientImpl::MultiWrite() ***

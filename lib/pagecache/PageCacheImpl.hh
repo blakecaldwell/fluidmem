@@ -157,6 +157,8 @@ struct null_deleter
 #define OWNERSHIP_PAGE_CACHE  2
 #define OWNERSHIP_EXTERNRAM   3
 
+#define MAX_PREFETCH 100
+
 class PageCacheImpl: public PageCache
 {
 private:
@@ -173,6 +175,13 @@ public:
     page_hash pagehash;
 
     page_cache_lru_list pageCache;
+
+    uint64_t keys_for_mread[MAX_PREFETCH];
+    void * bufs_for_mread[MAX_PREFETCH];
+    int lengths_for_mread[MAX_PREFETCH];
+    int numPrefetch;
+    uint64_t g_start;
+    uint64_t g_end;
 
     void        insertPageCacheNode(uint64_t key,int fd,void * addr,int size);
     void        referencePageCachedNode(uint64_t key,int fd);
@@ -191,6 +200,8 @@ public:
     void cleanup();
 
     virtual int  readPageIfInPageCache( uint64_t hashcode, int fd, void ** buf );
+    virtual void  readPageIfInPageCache_top( uint64_t hashcode, int fd, void ** buf );
+    virtual int  readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void ** buf );
     virtual void updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool zeroPage );
     virtual void invalidatePageCache( uint64_t hashcode, int fd );
     virtual uint64_t * removeUFDFromPageCache( int fd, int * numPages );
