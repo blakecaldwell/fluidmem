@@ -21,9 +21,9 @@ typedef struct c_cache_node c_cache_node;
 
 LRUBuffer* newLRUBuffer();
 
-void insertCacheNode(LRUBuffer *l, uint64_t key, int ufd);
+c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd);
 void referenceCachedNode(LRUBuffer *l, uint64_t key, int ufd);
-uint64_t popLRU(LRUBuffer *l);
+int popNLRU(LRUBuffer *l, int num_pop, c_cache_node * node_list);
 c_cache_node getLRU(LRUBuffer *l);
 int isLRUSizeExceeded(LRUBuffer *l);
 int getLRUBufferSize(LRUBuffer *l);

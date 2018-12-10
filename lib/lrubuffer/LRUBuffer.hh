@@ -27,17 +27,17 @@ public:
     static LRUBuffer *        create();
 
     // API with clients
-    virtual void        insertCacheNode(uint64_t key, int ufd){};
-    virtual void        referenceCachedNode(uint64_t key, int ufd){};
-    virtual uint64_t    popLRU(void){};
+    virtual struct c_cache_node insertCacheNode(uint64_t key, int ufd){};
+    virtual void                referenceCachedNode(uint64_t key, int ufd){};
+    virtual int                 popNLRU(int num_pop, c_cache_node * node_list){};
     virtual struct c_cache_node getLRU(){};
-    virtual int         isLRUSizeExceeded(void){};
-    virtual int         getSize(){};
-    virtual int         setSize(int size){};
-    virtual uint64_t *  removeUFDFromLRU(int ufd, int *numPages){};
-    virtual void        printLRUBuffer(FILE * file=NULL){};
+    virtual int                 isLRUSizeExceeded(void){};
+    virtual int                 getSize(){};
+    virtual int                 setSize(int size){};
+    virtual uint64_t *          removeUFDFromLRU(int ufd, int *numPages){};
+    virtual void                printLRUBuffer(FILE * file=NULL){};
 
-//protected:
+protected:
     LRUBuffer(){};
     LRUBuffer(const LRUBuffer &o);
     const LRUBuffer & operator =(const LRUBuffer &o);

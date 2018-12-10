@@ -128,6 +128,11 @@ struct null_deleter
 class LRUBufferImpl: public LRUBuffer
 {
 private:
+    struct c_cache_node popLRU(void);
+    int                 getSize();
+    int                 getMaxSize();
+    int                 setSize(int size);
+
     class PageInfo {
 public:
       int ref_count;
@@ -139,15 +144,12 @@ public:
     virtual ~LRUBufferImpl();
     LRUBufferImpl();
 
-    virtual void        insertCacheNode(uint64_t key, int ufd);
-    virtual void        referenceCachedNode(uint64_t key, int ufd);
-    virtual uint64_t    popLRU(void);
+    virtual void                referenceCachedNode(uint64_t key, int ufd);
+    virtual struct c_cache_node insertCacheNode(uint64_t key, int ufd);
+    virtual int                 popNLRU(int num_pop, c_cache_node * node_list);
+    virtual int                 isLRUSizeExceeded(void);
     virtual struct c_cache_node getLRU();
-    virtual int         isLRUSizeExceeded(void);
-    virtual int         getSize();
-    virtual int         getMaxSize();
-    virtual int         setSize(int size);
-    virtual uint64_t *  removeUFDFromLRU(int ufd, int *numPages);
-    virtual void        printLRUBuffer(FILE * file=NULL);
+    virtual uint64_t *          removeUFDFromLRU(int ufd, int *numPages);
+    virtual void                printLRUBuffer(FILE * file=NULL);
 };
 #endif

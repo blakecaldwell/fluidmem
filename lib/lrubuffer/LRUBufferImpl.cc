@@ -80,10 +80,12 @@ void LRUBufferImpl::referenceCachedNode(uint64_t key, int ufd) {
   log_trace_out("%s", __func__);
 }
 
-void LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
+c_cache_node LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
   log_trace_in("%s", __func__);
 
   cache_node node;
+  c_cache_node return_node;
+  memset(&return_node, 0, sizeof(c_cache_node));
 
   node.hashcode = hash_page_key(key, ufd);
   node.ufd = ufd;
@@ -93,15 +95,46 @@ void LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
 #ifdef MONITORSTATS
   StatsIncrLRUBufferSize();
 #endif
+  if (isLRUSizeExceeded()) {
+    log_debug("%s: LRU size exceeded", __func__);
+    return_node = popLRU();
+  }
 
+#ifdef DEBUG
+  int new_size = getSize();
+  log_debug("%s: new LRU size is %d", __func__, new_size);
+#endif
   log_trace_out("%s", __func__);
+  return return_node;
 }
 
-uint64_t LRUBufferImpl::popLRU() {
+int LRUBufferImpl::popNLRU(int num_pop, c_cache_node * node_list) {
+  log_trace_in("%s", __func__);
+
+  int i = 0;
+  int lru_size = getSize();
+
+  if (num_pop > lru_size)
+    num_pop = lru_size;
+
+  node_list = (c_cache_node *) malloc(sizeof(c_cache_node) * lru_size);
+
+  for (i = 0; i < num_pop; i++) {
+    c_cache_node node = popLRU();
+    node_list[i].ufd = node.ufd;
+    node_list[i].hashcode = node.hashcode;
+  }
+
+  log_trace_out("%s", __func__);
+  return num_pop;
+}
+
+c_cache_node LRUBufferImpl::popLRU() {
   log_trace_in("%s", __func__);
 
   uint64_t key;
   cache_node node = cache.back();
+  c_cache_node return_node;
   key = node.hashcode;
   cache.pop_back();
 
@@ -109,8 +142,11 @@ uint64_t LRUBufferImpl::popLRU() {
   StatsDecrLRUBufferSize();
 #endif
 
+  return_node.hashcode = node.hashcode;
+  return_node.ufd = node.ufd;
+
   log_trace_out("%s", __func__);
-  return key;
+  return return_node;
 }
 
 struct c_cache_node LRUBufferImpl::getLRU() {
@@ -194,6 +230,7 @@ uint64_t * LRUBufferImpl::removeUFDFromLRU(int ufd, int *numPages) {
   StatsSetLRUBufferSize((unsigned long)this->getSize());
 #endif
 
+  log_debug("%s: new LRU size is %d", __func__, (unsigned long)getSize());
   log_trace_out("%s", __func__);
   return keyList;
 }

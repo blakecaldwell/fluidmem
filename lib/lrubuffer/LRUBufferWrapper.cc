@@ -25,11 +25,11 @@ extern "C" {
   void referenceCachedNode(LRUBuffer *l, uint64_t key, int ufd) {
     l->referenceCachedNode(key, ufd);
   }
-  void insertCacheNode(LRUBuffer *l, uint64_t key, int ufd) {
-    l->insertCacheNode(key, ufd);
+  struct c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd) {
+    return l->insertCacheNode(key, ufd);
   }
-  uint64_t popLRU(LRUBuffer *l) {
-    return l->popLRU();
+  int popNLRU(LRUBuffer *l, int num_pop, c_cache_node * node_list) {
+    return l->popNLRU(num_pop, node_list);
   }
   c_cache_node getLRU(LRUBuffer *l) {
     return l->getLRU();

@@ -337,7 +337,6 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
   int ret = 0, ret2 = 0;
   uint64_t key;
   bool delayed_evict = false;
-  bool must_unlock_lru_lock = true;
 
 #ifdef CACHE
   log_lock("%s: locking lru_lock", __func__);
@@ -345,27 +344,15 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
   log_lock("%s: locked lru_lock", __func__);
 
   start_timing_bucket(start, INSERT_LRU_CACHE_NODE);
-  insertCacheNode(lru, (uint64_t)dst, ufd);
+  struct c_cache_node evict_node = insertCacheNode(lru, (uint64_t)dst, ufd);
   stop_timing(start, end, INSERT_LRU_CACHE_NODE);
 
-  /* did that insertion push the cache in libexternram above its limit? */
-  while (!delayed_evict && isLRUSizeExceeded(lru)) {
-    /* get the LRU address and evict it from userfault region to externRAM */
-    struct c_cache_node node = getLRU(lru);
+  log_lock("%s: unlocking lru_lock", __func__);
+  pthread_mutex_unlock(&lru_lock);
+  log_lock("%s: unlocked lru_lock", __func__);
 
-    /* Remove the entry from the LRU before releasing the lock and calling
-     * evict_to_externram. This prevents another thread from getting the
-     * same node using getLRU(lru)
-     */
-    popLRU(lru);
-
-    log_lock("%s: unlocking lru_lock", __func__);
-    pthread_mutex_unlock(&lru_lock);
-    log_lock("%s: unlocked lru_lock", __func__);
-
-    must_unlock_lru_lock = false;
-
-    key = node.hashcode & (uint64_t)(PAGE_MASK);
+  if (evict_node.hashcode != 0) {
+    key = evict_node.hashcode & (uint64_t)(PAGE_MASK);
 
     switch(page_type) {
       case COPY_PAGE:
@@ -389,7 +376,7 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
     }
 
     start_timing_bucket(start, EVICT_TO_EXTERNRAM);
-    ret2 = evict_to_externram(node.ufd, (void*)(uintptr_t)key);
+    ret2 = evict_to_externram(evict_node.ufd, (void*)(uintptr_t)key);
     stop_timing(start, end, EVICT_TO_EXTERNRAM);
 
     if (ret2 == 0) {
@@ -402,19 +389,19 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
       log_debug("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
 
       // return ufd of skipped page to caller
-      ret = node.ufd;
+      ret = evict_node.ufd;
     }
     else if (ret2 == 2) {
 #ifdef MONITORSTATS
       StatsIncrWriteSkippedZero_notlocked();
 #endif
-      log_info("%s: tried evicting zeropage %p from ufd %d, putting it back on lrubuffer", __func__, (void*)(uintptr_t)key, node.ufd);
+      log_info("%s: tried evicting zeropage %p from ufd %d, putting it back on lrubuffer", __func__, (void*)(uintptr_t)key, evict_node.ufd);
       log_lock("%s: locking lru_lock", __func__);
       pthread_mutex_lock(&lru_lock);
       log_lock("%s: locked lru_lock", __func__);
 
       start_timing_bucket(start, INSERT_LRU_CACHE_NODE);
-      insertCacheNode(lru, key, node.ufd);
+      insertCacheNode(lru, key, evict_node.ufd);
       stop_timing(start, end, INSERT_LRU_CACHE_NODE);
 
       log_lock("%s: unlocking lru_lock", __func__);
@@ -427,11 +414,6 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
       log_err("%s: eviction of page %p failed", __func__, (void*)(uintptr_t)key);
   }
 
-  if (must_unlock_lru_lock) {
-    log_lock("%s: unlocking lru_lock", __func__);
-    pthread_mutex_unlock(&lru_lock);
-    log_lock("%s: unlocked lru_lock", __func__);
-  }
 #endif
 
   log_trace_out("%s", __func__);
@@ -723,23 +705,21 @@ int evict_to_externram_multi(int size)
 
   uint64_t key;
   int cnt = 0; // number of actually evicted pages
-  int lru_size = getLRUBufferSize(lru);
+  struct c_cache_node * node_list;
 
-  if (size > lru_size) {
-    log_err("%s: the LRUBuffer size (%d) is less than the number of pages to be evicted (%d).",
-            __func__, lru_size, size);
-    return 0;
+  int num_to_evict = popNLRU(lru, size, node_list);
+  if (size > num_to_evict) {
+    log_warn("%s: the LRUBuffer has %d pages, less than the number of pages to be evicted (%d).",
+            __func__, num_to_evict, size);
   }
 
   int i = 0;
   for(; i < size; i++)
   {
     struct c_cache_node node = getLRU(lru);
-    popLRU(lru);
+    key = node_list[i].hashcode & (uint64_t)(PAGE_MASK);
 
-    key = node.hashcode & (uint64_t)(PAGE_MASK);
-
-    int ret = evict_to_externram(node.ufd, (void*)(uintptr_t)key);
+    int ret = evict_to_externram(node_list[i].ufd, (void*)(uintptr_t)key);
     if (ret == 0) {
       log_debug("%s: eviction of page %p succeeded", __func__, (void*)(uintptr_t)key);
       cnt++;
