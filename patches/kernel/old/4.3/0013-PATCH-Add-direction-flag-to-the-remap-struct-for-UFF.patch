@@ -1,0 +1,118 @@
+From e4fb15e2db39b55a40ac606a5cedc161919ca26a Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Thu, 10 Sep 2015 18:07:21 +0000
+Subject: [PATCH] [PATCH] Add direction flag to the remap struct for
+ UFFDIO_REMAP that  indicates which vma list to search. This is needed for the
+ use case of  evicting a page from outside the context of the userfaultfd. For
+ example:  eviction from a userfault vma in userfault_ctx->mm to a vma in
+ current->mm,  requires that we validated the src page exists in the vma list
+ of  userfault->mm, where move a page into the userfaultfd context requires
+ that  the src page must exist in the vma list of current->mm and that the 
+ destination page exist in the vma list of userfault_ctx->mm.
+
+---
+ tools/testing/selftests/vm/userfaultfd.c | 42 +++++++++++++++++---------------
+ 1 file changed, 23 insertions(+), 19 deletions(-)
+
+diff --git a/tools/testing/selftests/vm/userfaultfd.c b/tools/testing/selftests/vm/userfaultfd.c
+index 2c7cca6..0202af1 100644
+--- a/tools/testing/selftests/vm/userfaultfd.c
++++ b/tools/testing/selftests/vm/userfaultfd.c
+@@ -49,6 +49,7 @@
+  */
+ 
+ #define _GNU_SOURCE
++#define UFFDIO_REMAP_MODE_DONTWAKE		((__u64)1<<0)
+ #include <stdio.h>
+ #include <errno.h>
+ #include <unistd.h>
+@@ -227,26 +228,24 @@ static void *locking_thread(void *arg)
+ 
+ static int copy_page(unsigned long offset)
+ {
+-	struct uffdio_copy uffdio_copy;
++	struct uffdio_remap uffdio_remap;
+ 
+ 	if (offset >= nr_pages * page_size)
+ 		fprintf(stderr, "unexpected offset %lu\n",
+ 			offset), exit(1);
+-	uffdio_copy.dst = (unsigned long) area_dst + offset;
+-	uffdio_copy.src = (unsigned long) area_src + offset;
+-	uffdio_copy.len = page_size;
+-	uffdio_copy.mode = 0;
+-	uffdio_copy.copy = 0;
+-	if (ioctl(uffd, UFFDIO_COPY, &uffdio_copy)) {
+-		/* real retval in ufdio_copy.copy */
+-		if (uffdio_copy.copy != -EEXIST)
+-			fprintf(stderr, "UFFDIO_COPY error %Ld\n",
+-				uffdio_copy.copy), exit(1);
+-	} else if (uffdio_copy.copy != page_size) {
+-		fprintf(stderr, "UFFDIO_COPY unexpected copy %Ld\n",
+-			uffdio_copy.copy), exit(1);
+-	} else
+-		return 1;
++	uffdio_remap.dst = (unsigned long) area_dst + offset;
++	uffdio_remap.src = (unsigned long) area_src + offset;
++	uffdio_remap.len = page_size;
++//	uffdio_remap.mode = 0;
++	uffdio_remap.mode = UFFDIO_REMAP_MODE_DONTWAKE | UFFDIO_REMAP_MODE_ALLOW_SRC_HOLES;
++        uffdio_remap.direction = UFFDIO_REMAP_DIRECTION_IN;
++//	uffdio_remap.copy = 0;
++	if (ioctl(uffd, UFFDIO_REMAP, &uffdio_remap)) {
++          int e = errno;
++          fprintf(stderr,"%s: %s MOVE src: %Lx dst: %Lx\n",
++                 __func__,strerror(e), uffdio_remap.src, uffdio_remap.dst);
++          return -1;
++        }
+ 	return 0;
+ }
+ 
+@@ -364,7 +363,8 @@ static int stress(unsigned long *userfaults)
+ 		if (pthread_create(&locking_threads[cpu], &attr,
+ 				   locking_thread, (void *)cpu))
+ 			return 1;
+-		if (bounces & BOUNCE_POLL) {
++	        /*
++         	if (bounces & BOUNCE_POLL) {
+ 			if (pthread_create(&uffd_threads[cpu], &attr,
+ 					   uffd_poll_thread, (void *)cpu))
+ 				return 1;
+@@ -375,14 +375,17 @@ static int stress(unsigned long *userfaults)
+ 				return 1;
+ 			pthread_mutex_lock(&uffd_read_mutex);
+ 		}
++                */
+ 		if (pthread_create(&background_threads[cpu], &attr,
+ 				   background_thread, (void *)cpu))
+ 			return 1;
++        
+ 	}
+ 	for (cpu = 0; cpu < nr_cpus; cpu++)
+ 		if (pthread_join(background_threads[cpu], NULL))
+ 			return 1;
+-
++        
++         
+ 	/*
+ 	 * Be strict and immediately zap area_src, the whole area has
+ 	 * been transferred already by the background treads. The
+@@ -396,7 +399,7 @@ static int stress(unsigned long *userfaults)
+ 		perror("madvise");
+ 		return 1;
+ 	}
+-
++        /*
+ 	for (cpu = 0; cpu < nr_cpus; cpu++) {
+ 		char c;
+ 		if (bounces & BOUNCE_POLL) {
+@@ -413,6 +416,7 @@ static int stress(unsigned long *userfaults)
+ 				return 1;
+ 		}
+ 	}
++        */
+ 
+ 	finished = 1;
+ 	for (cpu = 0; cpu < nr_cpus; cpu++)
+-- 
+1.8.3.1
+

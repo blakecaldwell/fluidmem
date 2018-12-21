@@ -1,0 +1,378 @@
+Install RAMCloud on Ubuntu Servers
+-----------------------------------
+Blake Caldwell
+February 20th, 2015
+
+---
+This was the proceedure to build and test  RAMCloud on the ngn servers, which
+are running Ubuntu 14.01 LTS
+
+The basic proceedure follwed from this wiki page:
+https://ramcloud.atlassian.net/wiki/display/RAM/General+Information+for+Developers
+
+---
+Building
+
+# prerequisites for RAMCloud build:
+sudo apt-get -y install build-essential git-core libcppunit-dev libcppunit-doc \
+doxygen  protobuf-compiler libprotobuf-dev libcrypto++-dev libpcrecpp0 \
+libpcre++-dev libssl-dev libpcre3-dev
+
+# InfiniBand prereq's
+# distribution OFED
+sudo apt-get -y install infiniband-diags libibverbs-dev ibverbs-utils perftest \
+libmlx4-1 libmthca1
+sudo modprobe ib_umad
+sudo modprobe ib_uverbs
+sudo modprobe ib_mthca
+sudo modprobe ib_ipoib
+
+sudo ifconfig ib0 10.16.0.6 netmask 255.255.255.0
+sudo ifconfig ib0 up
+# edit /etc/network/interfaces
+auto ib0
+iface ib0 inet static
+        address 10.16.0.6/24
+        gateway 10.16.0.1
+
+# Verify the ibv_devinfo works (this is the uverbs interface to the IB device
+# that RAMCloud uses)
+
+# install and start zookeeper
+# for dev environment only:
+# sudo apt-get libzookeeper-mt2 libzookeeper-mt-dev
+# for servers:
+sudo apt-get -y install zookeeper zookeeper-bin zookeeperd libzookeeper-mt2 \
+libzookeeper-mt-dev
+sudo service zookeeper start
+
+# install all boot libraries (more recent than version used in RAMCloud
+# document)
+sudo apt-get -y install libboost1.54-all-dev
+
+# git clone RAMCloud
+cd ~/
+git clone https://github.com/PlatformLab/RAMCloud.git
+# Get the patches from this repository
+cp stateless-mb-code-and-exp-setup/RAMCloud/*.patch ~/RAMCloud/
+
+# Get RAMCloud source
+cd RAMCloud
+git submodule update --init --recursive
+
+# Patch RAMcloud source
+patch -p1 < ./Makefile.patch
+patch -p1 < ./infiniband.patch
+patch -p1 < ./debug_no.patch
+
+# switch to GCC 4.4 (see issue 1.)
+sudo apt-get -y install g++-4.4
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 60 \
+--slave /usr/bin/g++ g++ /usr/bin/g++-4.8 
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.4 40 \
+--slave /usr/bin/g++ g++ /usr/bin/g++-4.4
+sudo update-alternatives --config gcc # select gcc-4.4
+
+# Build RAMCloud
+make -j4 DEBUG=no INFINIBAND=yes
+
+sudo mkdir /usr/local/include/{gtest,ramcloud}
+sudo mkdir /usr/local/lib/ramcloud
+sudo cp -r gtest/include/gtest /usr/local/include/gtest
+sudo cp -r obj.master/*.h /usr/local/include/ramcloud
+sudo cp -r src/*.h /usr/local/include/ramcloud
+sudo cp -r obj.master/* /usr/local/lib/ramcloud
+
+
+
+---
+# Build LogCabin
+We don't use LogCabin yet
+
+#cd logcabin/
+#git fetch origin
+#git reset --hard origin/master
+#cd ../
+#make logcabin DEBUG=no
+
+---
+Unit tests
+
+# Pre-definied unit tests
+make test 
+
+That failed with this test:
+[ RUN      ] PortAlarmTest.restart_portTimer
+/home/caldweba/ramcloud/src/PortAlarmTest.cc:292: Failure
+Value of: 10
+Expected: port1->alarm.idleMs
+Which is: 5
+/home/caldweba/ramcloud/src/PortAlarmTest.cc:293: Failure
+Value of: 10
+Expected: port2->alarm.idleMs
+Which is: 5
+/home/caldweba/ramcloud/src/PortAlarmTest.cc:301: Failure
+Value of: 10
+Expected: port2->alarm.idleMs
+Which is: 5
+1424484619.623657270 /home/caldweba/ramcloud/src/Segment.h:167 in
+RAMCloud::LogEntryType RAMCloud::Segment::EntryHeader::getType() const
+default ERROR[22744:1]: Assertion `(lengthBytesAndType & 0x3f) <
+TOTAL_LOG_ENTRY_TYPES' failed.
+make: *** [test] Aborted (core dumped)
+
+---
+Starting zookeeeper
+
+This configuration file is kept at:
+/etc/zookeeper/conf/zoo.cfg
+
+# just start it with defaults
+sudo service zookeeper start
+
+# check that it is listenting on port 2181
+sudo netstat -tunelpa|grep 2181
+
+# example:
+# tcp6     0    0 :::2181       :::*        LISTEN      105    13473   1402/java
+
+
+# check logs for successful startup
+tail -100 /var/log/zookeeper/zookeeper.log
+
+---
+Starting the coordinator
+
+# singlehost
+./obj.master/coordinator
+
+# multihost
+
+ZOOKEEPER=ramcloud1-ib; RAMCloud/obj.master/coordinator -C infrc:host=ramcloud1-ib,port=11100 -x zk:${ZOOKEEPER}:2181
+
+---
+Starting a server
+From README
+
+# singlehost
+./obj.master/server -M -r 0
+
+# multihost
+ZOOKEEPER=ramcloud1-ib; sudo RAMCloud/obj.master/server -L infrc:host=$(hostname -s)-ib,port=1101 -x zk:${ZOOKEEPER}:2181 --totalMasterMemory 16000 --segmentFrames 10000 -f /dev/mapper/$(hostname -s)--vg-backup -r 1
+
+Testing with a client
+From README
+
+./obj.master/client
+
+It's a pretty boring test, just seems to connect in a loop:
+CoordinatorSession::getSession default NOTICE[23944:1]: Opened session with coordinator at fast+udp:host=0.0.0.0,port=12246
+
+---
+Compiling a client
+
+Some of the libraries and header file from RAMCloud/obj.master and RAMClous/src can be copied to /usr/local and the the build command becomes:
+g++ -std=c++0x -I/usr/local/include/gtest -I/usr/local/include/ramcloud -L/usr/local/lib/ramcloud -Wl,-rpath,/usr/local/lib/ramcloud -lramcloud -lboost_system -o client client.cc
+
+The rpath is necessary for locating libramcloud that is not installed in a system default directory.
+
+---
+Testing with python bindings
+From README
+
+LD_LIBRARY_PATH=$LD_LIBRARY_PATH:obj.master PYTHONPATH=bindings/python python
+>>> import ramcloud
+
+>>> c = ramcloud.RAMCloud()
+
+>>> c.connect()
+
+>>> c.write(0, 0, 'Hello from Python!')
+1424486194.379029697 src/CoordinatorSession.cc:105 in
+CoordinatorSession::getSession default NOTICE[24172:1]: Opened session with
+coordinator at fast+udp:host=127.0.0.1,port=12242
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/home/caldweba/ramcloud/bindings/python/ramcloud.py", line 315, in
+write
+    return self.write_rr(table_id, id, data, reject_rules)
+  File "/home/caldweba/ramcloud/bindings/python/ramcloud.py", line 323, in
+write_rr
+    self.handle_error(s, got_version.value)
+  File "/home/caldweba/ramcloud/bindings/python/ramcloud.py", line 233, in
+handle_error
+    raise RCException(status)
+ramcloud.RCException: RAMCloud error 18
+
+# This obviously failed! FIXME
+
+From the server:
+1424486194.379271684 src/ServiceManager.cc:162 in ServiceManager::handleRpc default WARNING[24091:1]: Incoming RPC requested unavailable service 2
+
+
+
+>>> c.read(0, 0)
+
+
+---
+Issues
+
+1. Building Logcabin with gcc 4.8
+A RAMCloud developer mentioned preferring to use gcc 4.4, but fixes for gcc
+4.8+ were incorprated into master branch of LogCabin. When you init the
+submodule it appears to pull a very old branch of LogCabin from 2012:
+HEAD detached at a735725
+
+We are fearless, so get the latest version:
+
+cd logcabin
+git fetch origin
+git reset --hard origin/master
+scons
+
+This solution was discovered here:
+https://mailman.stanford.edu/pipermail/ramcloud-dev/2014-March/000690.html
+
+---
+2. Trouble compiling with g++4.8 (or g++-4.9 in Ubuntu 14.10).
+First running with "make DEBUG=no" and g++ 4.8:
+g++ -g -O3 -fno-strict-aliasing -MD -msse4.2 -DNDEBUG -Wno-unused-variable
+-march=core2 -std=c++0x -I/home/caldweba/ramcloud/src
+-I/home/caldweba/ramcloud/obj.master -I/home/caldweba/ramcloud/gtest/include
+-I/usr/local/openonload-201405/src/include -Werror -Wall -Wformat=2 -Wextra
+-Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute
+-Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align
+-Wconversion -Weffc++ -fPIC -c -o obj.master/OptionParser.o
+/home/caldweba/ramcloud/src/OptionParser.cc
+/home/caldweba/ramcloud/src/OptionParser.cc: In function 'void
+RAMCloud::invokeGDB(int)':
+/home/caldweba/ramcloud/src/OptionParser.cc:106:16: error: ignoring return
+value of 'int system(const char*)', declared with attribute
+warn_unused_result [-Werror=unused-result]
+     system(buf);
+                ^
+
+So we try to run with "make":
+g++ -g -fno-strict-aliasing -MD -msse4.2 -DTESTING=1 -fno-builtin
+-march=core2 -std=c++0x -I/home/caldweba/ramcloud/src
+-I/home/caldweba/ramcloud/obj.master -I/home/caldweba/ramcloud/gtest/include
+-I/usr/local/openonload-201405/src/include -Werror -Wall -Wformat=2 -Wextra
+-Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute
+-Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align
+-Wconversion -Weffc++ -fPIC -c -o obj.master/IndexRpcWrapper.o
+/home/caldweba/ramcloud/src/IndexRpcWrapper.cc
+In file included from /home/caldweba/ramcloud/src/IndexletManager.h:21:0,
+                 from /home/caldweba/ramcloud/src/MasterService.h:39,
+                 from /home/caldweba/ramcloud/src/IndexRpcWrapper.cc:18:
+/home/caldweba/ramcloud/src/btreeRamCloud/Btree.h: In member function
+'virtual RAMCloud::IndexBtree::Node*
+RAMCloud::IndexBtree::Node::serializeAppendToBuffer(RAMCloud::Buffer*)
+const':
+/home/caldweba/ramcloud/src/btreeRamCloud/Btree.h:555:47: error: conversion
+to 'uint32_t {aka unsigned int}' from 'long unsigned int' may alter its
+value [-Werror=conversion]
+                                         sizeof(LeafNode) :
+sizeof(InnerNode);
+                                               ^
+
+Giving up, I switched to gcc4.4:
+
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 60 \
+--slave /usr/bin/g++ g++ /usr/bin/g++-4.8 
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.4 40 \
+--slave /usr/bin/g++ g++ /usr/bin/g++-4.4
+sudo update-alternatives --config gcc # select gcc-4.4
+make clean
+make -j12 DEBUG=no
+
+Perhaps these patches aren't applied yet?
+[ramcloud-dev] Fixes for GCC 4.9:
+https://mailman.stanford.edu/pipermail/ramcloud-dev/2014-October/000949.html
+
+---
+3. Building with Infiniband drivers 
+
+Update: Fixed by applying infiniband.patch (see build instructions)
+
+RAMCloud appears to use an outdated version of libibverbs (verbs.h) that
+defines IBV_QPT_RAW_ETH. Google will reveal that this used to be defined.
+I've tried defining it in the enum as it was before (we are not actually
+using Ethernet queue paris for Infiniband, since we use real IB), but
+compile just failed further down the line.
+
+g++ -g -fno-strict-aliasing -MD -msse4.2 -DTESTING=1 -fno-builtin
+-march=core2 -DINFINIBAND -std=c++0x -I/home/caldweba/ramcloud/src
+-I/home/caldweba/ramcloud/obj.master -I/home/caldweba/ramcloud/gtest/include
+-I/usr/local/openonload-201405/src/include -Werror -Wall -Wformat=2 -Wextra
+-Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute
+-Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align
+-Wconversion -Weffc++ -fPIC -c -o obj.master/InfRcTransport.o
+/home/caldweba/ramcloud/src/InfRcTransport.cc
+/home/caldweba/ramcloud/src/Infiniband.cc: In constructor
+'RAMCloud::Infiniband::QueuePair::QueuePair(RAMCloud::Infiniband&,
+ibv_qp_type, int, ibv_srq*, ibv_cq*, ibv_cq*, uint32_t, uint32_t,
+uint32_t)':
+/home/caldweba/ramcloud/src/Infiniband.cc:519: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+/home/caldweba/ramcloud/src/Infiniband.cc:561: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+/home/caldweba/ramcloud/src/Infiniband.cc: In member function 'void
+RAMCloud::Infiniband::QueuePair::activate(const
+RAMCloud::Tub<RAMCloud::MacAddress>&)':
+/home/caldweba/ramcloud/src/Infiniband.cc:677: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+/home/caldweba/ramcloud/src/Infiniband.cc:698: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+/home/caldweba/ramcloud/src/Infiniband.cc:708: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+/home/caldweba/ramcloud/src/InfUdDriver.cc: In constructor
+'RAMCloud::InfUdDriver::InfUdDriver(RAMCloud::Context*, const
+RAMCloud::ServiceLocator*, bool)':
+/home/caldweba/ramcloud/src/InfUdDriver.cc:130: error: 'IBV_QPT_RAW_ETH' was
+not declared in this scope
+make: *** [obj.master/Infiniband.o] Error 1
+make: *** Waiting for unfinished jobs....
+
+To get it to work I had to run:
+make INFINIBAND=no -j12
+
+This didn't work either (as suggested in the link below)
+make EXTRACXXFLAGS="-DIBV_QPT_RAW_ETH=1000" -j12
+
+https://mailman.stanford.edu/pipermail/ramcloud-dev/2013-October/000565.html
+
+---
+4. Making without Debug info 
+
+Update: fixed with debug_no.patch
+
+"make DEBUG=no" gives the following:
+
+g++ -g -O3 -fno-strict-aliasing -MD -msse4.2 -DNDEBUG -Wno-unused-variable
+-march=core2 -DINFINIBAND -std=c++0x -I/home/caldweba/ramcloud/src
+-I/home/caldweba/ramcloud/obj.master -I/home/caldweba/ramcloud/gtest/include
+-I/usr/local/openonload-201405/src/include -Werror -Wall -Wformat=2 -Wextra
+-Wwrite-strings -Wno-unused-parameter -Wmissing-format-attribute
+-Wno-non-template-friend -Woverloaded-virtual -Wcast-qual -Wcast-align
+-Wconversion -Weffc++ -fPIC -c -o obj.master/OptionParser.o
+/home/caldweba/ramcloud/src/OptionParser.cc
+cc1plus: warnings being treated as errors
+/home/caldweba/ramcloud/src/OptionParser.cc: In function 'void
+RAMCloud::invokeGDB(int)':
+/home/caldweba/ramcloud/src/OptionParser.cc:106: error: ignoring return
+value of 'int system(const char*)', declared with attribute
+warn_unused_result
+
+---
+Installing Mellanox OFED
+
+We did this along the way of trying to get IB to work in a KVM VM. It was ultimately unsuccessful with the ConnectX2 cards.
+
+# 1. Obtain the Mellanox tgz from
+#   http://www.mellanox.com/page/mlnx_ofed_eula?mtag=linux_sw_drivers&mrequest=downloads&mtype=ofed&mver=MLNX_OFED-2.4-1.0.0&mname=MLNX_OFED_LINUX-2.4-1.0.0-ubuntu14.04-x86_64.tgz
+tar -xf MLNX_OFED_LINUX-2.4-1.0.0-ubuntu14.04-x86_64.tgz
+cd MLNX_OFED_LINUX-2.4-1.0.0-ubuntu14.04-x86_64
+sudo apt-get purge libibnetdisc5 libmthca1 libibmad5 libibumad3 libopensm5
+sudo ./mlnxofedinstall
+
+% vim:tabstop=4:shiftwidth=4:expandtab:textwidth=76:filetype=plaintex

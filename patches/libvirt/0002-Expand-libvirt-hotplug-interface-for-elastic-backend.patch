@@ -1,0 +1,128 @@
+From 00aa8e0f712bc3412098d5bf2c418dbf17a2a418 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <caldweba@colorado.edu>
+Date: Sat, 26 Nov 2016 02:15:33 +0000
+Subject: [PATCH 2/2] Expand libvirt hotplug interface for elastic backend
+
+isElastic XML node will be parsed on virsh attach-device to determine
+if the hotplug memory region should be allocated using (modified) Qemu's
+elastic memory backend.
+---
+ src/conf/domain_conf.c  | 17 +++++++++++++++++
+ src/conf/domain_conf.h  |  1 +
+ src/qemu/qemu_command.c |  6 +++---
+ src/qemu/qemu_command.h |  2 +-
+ src/qemu/qemu_hotplug.c |  2 +-
+ 5 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/src/conf/domain_conf.c b/src/conf/domain_conf.c
+index 6e008e2..5d0f212 100644
+--- a/src/conf/domain_conf.c
++++ b/src/conf/domain_conf.c
+@@ -13407,11 +13407,27 @@ virDomainMemorySourceDefParseXML(xmlNodePtr node,
+     char *nodemask = NULL;
+     xmlNodePtr save = ctxt->node;
+     ctxt->node = node;
++    char *tmp = NULL;
++    int isElastic = 0;
+ 
+     if (virDomainParseMemory("./pagesize", "./pagesize/@unit", ctxt,
+                              &def->pagesize, false, false) < 0)
+         goto cleanup;
+ 
++    if ((tmp = virXPathString("string(./isElastic)", ctxt))) {
++        if (virStrToLong_i(tmp, NULL, 10, &isElastic) < 0) {
++            virReportError(VIR_ERR_XML_ERROR, "%s",
++                           _("Invalid value for isElastic"));
++            goto cleanup;
++        }
++        if ((isElastic < 0) || (isElastic > 1)) {
++            virReportError(VIR_ERR_XML_ERROR, "%s",
++                           _("Value for isElastic is not in range [0-1]"));
++            goto cleanup;
++        }
++    }
++    def->isElastic = (bool)isElastic;
++
+     if ((nodemask = virXPathString("string(./nodemask)", ctxt))) {
+         if (virBitmapParse(nodemask, &def->sourceNodes,
+                            VIR_DOMAIN_CPUMASK_LEN) < 0)
+@@ -13427,6 +13443,7 @@ virDomainMemorySourceDefParseXML(xmlNodePtr node,
+     ret = 0;
+ 
+  cleanup:
++    VIR_FREE(tmp);
+     VIR_FREE(nodemask);
+     ctxt->node = save;
+     return ret;
+diff --git a/src/conf/domain_conf.h b/src/conf/domain_conf.h
+index 541b600..e85a857 100644
+--- a/src/conf/domain_conf.h
++++ b/src/conf/domain_conf.h
+@@ -1966,6 +1966,7 @@ struct _virDomainMemoryDef {
+     /* source */
+     virBitmapPtr sourceNodes;
+     unsigned long long pagesize; /* kibibytes */
++    bool isElastic;
+ 
+     /* target */
+     int model; /* virDomainMemoryModel */
+diff --git a/src/qemu/qemu_command.c b/src/qemu/qemu_command.c
+index 4d690ec..872c99f 100644
+--- a/src/qemu/qemu_command.c
++++ b/src/qemu/qemu_command.c
+@@ -3215,7 +3215,7 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                           const char **backendType,
+                           virJSONValuePtr *backendProps,
+                           bool force,
+-                          bool hotplug)
++                          bool isElastic)
+ {
+     virDomainHugePagePtr master_hugepage = NULL;
+     virDomainHugePagePtr hugepage = NULL;
+@@ -3337,7 +3337,7 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                              "only with hugepages"));
+             goto cleanup;
+         }
+-        if (hotplug)
++        if (isElastic)
+             *backendType = "memory-backend-elastic";
+         else
+             *backendType = "memory-backend-ram";
+@@ -3384,7 +3384,7 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                              "memory-backend-ram object"));
+             goto cleanup;
+         }
+-        else if (STREQ(*backendType,"memory-backend-elastic")) &&
++        else if (STREQ(*backendType,"memory-backend-elastic") &&
+                  !virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC)) {
+             virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                            _("this qemu doesn't support the "
+diff --git a/src/qemu/qemu_command.h b/src/qemu/qemu_command.h
+index 3905e91..7b16124 100644
+--- a/src/qemu/qemu_command.h
++++ b/src/qemu/qemu_command.h
+@@ -134,7 +134,7 @@ int qemuBuildMemoryBackendStr(unsigned long long size,
+                               const char **backendType,
+                               virJSONValuePtr *backendProps,
+                               bool force,
+-                              bool hotplug);
++                              bool isElastic);
+ 
+ char *qemuBuildMemoryDeviceStr(virDomainMemoryDefPtr mem);
+ 
+diff --git a/src/qemu/qemu_hotplug.c b/src/qemu/qemu_hotplug.c
+index 3ab88e1..d62d4a0 100644
+--- a/src/qemu/qemu_hotplug.c
++++ b/src/qemu/qemu_hotplug.c
+@@ -2157,7 +2157,7 @@ qemuDomainAttachMemory(virQEMUDriverPtr driver,
+     if (qemuBuildMemoryBackendStr(mem->size, mem->pagesize,
+                                   mem->targetNode, mem->sourceNodes, NULL,
+                                   vm->def, priv->qemuCaps, cfg,
+-                                  &backendType, &props, true, true) < 0)
++                                  &backendType, &props, true, mem->isElastic) < 0)
+         goto cleanup;
+ 
+     if (virDomainMemoryInsert(vm->def, mem) < 0) {
+-- 
+1.8.3.1
+

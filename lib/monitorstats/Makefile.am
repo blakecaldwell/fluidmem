@@ -1,0 +1,29 @@
+include_HEADERS = monitorstats.h timingstats.h
+
+MONITORSTATS_FLAGS =
+if DEBUG
+MONITORSTATS_FLAGS += -g -DDEBUG
+else
+if PROFILING
+MONITORSTATS_FLAGS += -g
+endif
+endif
+if TIMING
+MONITORSTATS_FLAGS += -DTIMING
+endif
+if TRACE
+MONITORSTATS_FLAGS += -DTRACE
+endif
+if PAGECACHE
+MONITORSTATS_FLAGS += -DPAGECACHE
+endif
+if PAGECACHE_ZEROPAGE_OPTIMIZATION
+MONITORSTATS_FLAGS += -DPAGECACHE_ZEROPAGE_OPTIMIZATION
+endif
+if LOCK_DEBUG
+MONITORSTATS_FLAGS += -DLOCK_DEBUG
+endif
+
+lib_LTLIBRARIES = libmonitorstats.la
+libmonitorstats_la_SOURCES = monitorstats.c monitorstats.h timingstats.h
+libmonitorstats_la_CPPFLAGS = -I$(SCALEOS_ROOT)/include $(MONITORSTATS_FLAGS)

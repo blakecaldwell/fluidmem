@@ -1,0 +1,112 @@
+From 252678912c2a8c0902e69e8b9eb138083d5f3ae2 Mon Sep 17 00:00:00 2001
+From: libvirt container <you@example.com>
+Date: Fri, 25 Nov 2016 19:42:26 +0000
+Subject: [PATCH] elastic memory backend
+
+---
+ Makefile.target            |  2 +-
+ backends/Makefile.objs     |  2 ++
+ backends/hostmem-elastic.c | 67 ++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 70 insertions(+), 1 deletion(-)
+ create mode 100644 backends/hostmem-elastic.c
+
+diff --git a/Makefile.target b/Makefile.target
+index a440bcb..b9e83f9 100644
+--- a/Makefile.target
++++ b/Makefile.target
+@@ -194,7 +194,7 @@ $(QEMU_PROG_BUILD): config-devices.mak
+ 
+ # build either PROG or PROGW
+ $(QEMU_PROG_BUILD): $(all-obj-y) ../libqemuutil.a ../libqemustub.a
+-	$(call LINK, $(filter-out %.mak, $^))
++	$(call LINK, $(filter-out %.mak, $^)) -luserfault_client
+ ifdef CONFIG_DARWIN
+ 	$(call quiet-command,Rez -append $(SRC_PATH)/pc-bios/qemu.rsrc -o $@,"  REZ   $(TARGET_DIR)$@")
+ 	$(call quiet-command,SetFile -a C $@,"  SETFILE $(TARGET_DIR)$@")
+diff --git a/backends/Makefile.objs b/backends/Makefile.objs
+index 31a3a89..47ba957 100644
+--- a/backends/Makefile.objs
++++ b/backends/Makefile.objs
+@@ -8,4 +8,6 @@ baum.o-cflags := $(SDL_CFLAGS)
+ common-obj-$(CONFIG_TPM) += tpm.o
+ 
+ common-obj-y += hostmem.o hostmem-ram.o
++common-obj-$(CONFIG_LINUX) += hostmem-elastic.o
++
+ common-obj-$(CONFIG_LINUX) += hostmem-file.o
+diff --git a/backends/hostmem-elastic.c b/backends/hostmem-elastic.c
+new file mode 100644
+index 0000000..1249199
+--- /dev/null
++++ b/backends/hostmem-elastic.c
+@@ -0,0 +1,67 @@
++/*
++ * QEMU Elastic Memory Backend
++ *
++ * Authors:
++ *   Blake Caldwell <blake.caldwell@colorado.edu>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "sysemu/hostmem.h"
++#include "qapi/error.h"
++#include "qom/object_interfaces.h"
++
++#if defined(__linux__)
++#define TYPE_MEMORY_BACKEND_ELASTIC "memory-backend-elastic"
++
++#include <userfault-client.h>
++
++static void
++elastic_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
++{
++    char *path;
++    void *ufregion = NULL; // pointer to userfault region
++    int ufd = -1;
++
++    if (!backend->size) {
++        error_setg(errp, "can't create backend with size 0");
++        return;
++    }
++
++    ufregion = allocate_userfault(&ufd, backend->size);
++    if (ufregion == NULL) {
++        error_setg(errp, "Failed to register userfault region");
++        return;
++    }
++
++    path = object_get_canonical_path_component(OBJECT(backend));
++    memory_region_init_ram_ptr(&backend->mr, OBJECT(backend), path,
++                           backend->size, ufregion);
++    g_free(path);
++
++    return;
++
++}
++
++static void
++elastic_backend_class_init(ObjectClass *oc, void *data)
++{
++    HostMemoryBackendClass *bc = MEMORY_BACKEND_CLASS(oc);
++    bc->alloc = elastic_backend_memory_alloc;
++}
++
++static const TypeInfo elastic_backend_info = {
++    .name = TYPE_MEMORY_BACKEND_ELASTIC,
++    .parent = TYPE_MEMORY_BACKEND,
++    .class_init = elastic_backend_class_init,
++};
++
++static void register_types(void)
++{
++    type_register_static(&elastic_backend_info);
++}
++
++type_init(register_types);
++#endif
+-- 
+1.8.3.1
+

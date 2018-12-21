@@ -1,0 +1,26 @@
+From dd733abbdd81e8bb9ca4b597619c8f3539e9d7f6 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Wed, 5 Aug 2015 11:20:58 -0600
+Subject: [PATCH 10/12] Since commit 8809aa2d2 pmdp_huge_clear_flush has been
+ changed to pmdp_huge_clear_flush. Use the new name.
+
+---
+ mm/huge_memory.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index cbb8b1f..181609e 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1678,7 +1678,7 @@ int remap_pages_huge_pmd(struct mm_struct *dst_mm,
+ 	ACCESS_ONCE(src_page->mapping) = (struct address_space *) dst_anon_vma;
+ 	ACCESS_ONCE(src_page->index) = linear_page_index(dst_vma, dst_addr);
+ 
+-	if (!pmd_same(pmdp_clear_flush(src_vma, src_addr, src_pmd),
++	if (!pmd_same(pmdp_huge_clear_flush(src_vma, src_addr, src_pmd),
+ 		      src_pmdval))
+ 		BUG();
+ 	_dst_pmd = mk_huge_pmd(src_page, dst_vma->vm_page_prot);
+-- 
+1.8.3.1
+

@@ -1,0 +1,151 @@
+From 74e9f6d047363ae072943287553824e0291fa5ff Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Wed, 16 Sep 2015 04:25:47 +0000
+Subject: [PATCH 1/2] libvirt elastic-memory-backend
+
+Signed-off-by: Blake Caldwell <blake.caldwell@colorado.edu>
+---
+ src/qemu/qemu_capabilities.c |  2 ++
+ src/qemu/qemu_capabilities.h |  1 +
+ src/qemu/qemu_command.c      | 22 +++++++++++++++++-----
+ src/qemu/qemu_command.h      |  3 ++-
+ src/qemu/qemu_hotplug.c      |  2 +-
+ 5 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/src/qemu/qemu_capabilities.c b/src/qemu/qemu_capabilities.c
+index cfd090c..c5d3436 100644
+--- a/src/qemu/qemu_capabilities.c
++++ b/src/qemu/qemu_capabilities.c
+@@ -352,6 +352,7 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
+               "ivshmem-doorbell", /* 240 */
+               "query-qmp-schema",
+               "gluster.debug_level",
++              "memory-backend-elastic",
+     );
+ 
+ 
+@@ -1596,6 +1597,7 @@ struct virQEMUCapsStringFlags virQEMUCapsObjectTypes[] = {
+     { "intel-iommu", QEMU_CAPS_DEVICE_INTEL_IOMMU },
+     { "ivshmem-plain", QEMU_CAPS_DEVICE_IVSHMEM_PLAIN },
+     { "ivshmem-doorbell", QEMU_CAPS_DEVICE_IVSHMEM_DOORBELL },
++    { "memory-backend-elastic", QEMU_CAPS_OBJECT_MEMORY_ELASTIC },
+ };
+ 
+ static struct virQEMUCapsStringFlags virQEMUCapsObjectPropsVirtioBalloon[] = {
+diff --git a/src/qemu/qemu_capabilities.h b/src/qemu/qemu_capabilities.h
+index 9163572..b0b5dd8 100644
+--- a/src/qemu/qemu_capabilities.h
++++ b/src/qemu/qemu_capabilities.h
+@@ -387,6 +387,7 @@ typedef enum {
+     QEMU_CAPS_DEVICE_IVSHMEM_DOORBELL, /* -device ivshmem-doorbell */
+     QEMU_CAPS_QUERY_QMP_SCHEMA, /* query-qmp-schema command */
+     QEMU_CAPS_GLUSTER_DEBUG_LEVEL, /* -drive gluster.debug_level={0..9} */
++    QEMU_CAPS_OBJECT_MEMORY_ELASTIC, /* memory-backend-elastic device */
+ 
+     QEMU_CAPS_LAST /* this must always be the last item */
+ } virQEMUCapsFlags;
+diff --git a/src/qemu/qemu_command.c b/src/qemu/qemu_command.c
+index 4a5fce3..4d690ec 100644
+--- a/src/qemu/qemu_command.c
++++ b/src/qemu/qemu_command.c
+@@ -3214,7 +3214,8 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                           virQEMUDriverConfigPtr cfg,
+                           const char **backendType,
+                           virJSONValuePtr *backendProps,
+-                          bool force)
++                          bool force,
++                          bool hotplug)
+ {
+     virDomainHugePagePtr master_hugepage = NULL;
+     virDomainHugePagePtr hugepage = NULL;
+@@ -3336,8 +3337,10 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                              "only with hugepages"));
+             goto cleanup;
+         }
+-
+-        *backendType = "memory-backend-ram";
++        if (hotplug)
++            *backendType = "memory-backend-elastic";
++        else
++            *backendType = "memory-backend-ram";
+     }
+ 
+     if (virJSONValueObjectAdd(props, "U:size", size * 1024, NULL) < 0)
+@@ -3381,6 +3384,13 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+                              "memory-backend-ram object"));
+             goto cleanup;
+         }
++        else if (STREQ(*backendType,"memory-backend-elastic")) &&
++                 !virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC)) {
++            virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
++                           _("this qemu doesn't support the "
++                             "memory-backend-elastic object"));
++            goto cleanup;
++        }
+ 
+         ret = 0;
+     }
+@@ -3419,7 +3429,7 @@ qemuBuildMemoryCellBackendStr(virDomainDefPtr def,
+ 
+     if ((rc = qemuBuildMemoryBackendStr(memsize, 0, cell, NULL, auto_nodeset,
+                                         def, qemuCaps, cfg, &backendType,
+-                                        &props, false)) < 0)
++                                        &props, false, false)) < 0)
+         goto cleanup;
+ 
+     if (!(*backendStr = virQEMUBuildObjectCommandlineFromJSON(backendType,
+@@ -3461,7 +3471,7 @@ qemuBuildMemoryDimmBackendStr(virDomainMemoryDefPtr mem,
+     if (qemuBuildMemoryBackendStr(mem->size, mem->pagesize,
+                                   mem->targetNode, mem->sourceNodes, auto_nodeset,
+                                   def, qemuCaps, cfg,
+-                                  &backendType, &props, true) < 0)
++                                  &backendType, &props, true, false) < 0)
+         goto cleanup;
+ 
+     ret = virQEMUBuildObjectCommandlineFromJSON(backendType, alias, props);
+@@ -7284,6 +7294,7 @@ qemuBuildNumaArgStr(virQEMUDriverConfigPtr cfg,
+ 
+     if (virDomainNumatuneHasPerNodeBinding(def->numa) &&
+         !(virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_RAM) ||
++          virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC) ||
+           virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_FILE))) {
+         virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                        _("Per-node memory binding is not supported "
+@@ -7334,6 +7345,7 @@ qemuBuildNumaArgStr(virQEMUDriverConfigPtr cfg,
+      * need to check which approach to use */
+     for (i = 0; i < ncells; i++) {
+         if (virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_RAM) ||
++            virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC) ||
+             virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_FILE)) {
+             if ((rc = qemuBuildMemoryCellBackendStr(def, qemuCaps, cfg, i,
+                                                     auto_nodeset,
+diff --git a/src/qemu/qemu_command.h b/src/qemu/qemu_command.h
+index e0c84df..3905e91 100644
+--- a/src/qemu/qemu_command.h
++++ b/src/qemu/qemu_command.h
+@@ -133,7 +133,8 @@ int qemuBuildMemoryBackendStr(unsigned long long size,
+                               virQEMUDriverConfigPtr cfg,
+                               const char **backendType,
+                               virJSONValuePtr *backendProps,
+-                              bool force);
++                              bool force,
++                              bool hotplug);
+ 
+ char *qemuBuildMemoryDeviceStr(virDomainMemoryDefPtr mem);
+ 
+diff --git a/src/qemu/qemu_hotplug.c b/src/qemu/qemu_hotplug.c
+index 6b3a068..3ab88e1 100644
+--- a/src/qemu/qemu_hotplug.c
++++ b/src/qemu/qemu_hotplug.c
+@@ -2157,7 +2157,7 @@ qemuDomainAttachMemory(virQEMUDriverPtr driver,
+     if (qemuBuildMemoryBackendStr(mem->size, mem->pagesize,
+                                   mem->targetNode, mem->sourceNodes, NULL,
+                                   vm->def, priv->qemuCaps, cfg,
+-                                  &backendType, &props, true) < 0)
++                                  &backendType, &props, true, true) < 0)
+         goto cleanup;
+ 
+     if (virDomainMemoryInsert(vm->def, mem) < 0) {
+-- 
+1.8.3.1
+

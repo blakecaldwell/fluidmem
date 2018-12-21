@@ -1,0 +1,39 @@
+From a73a6c5286cc8fae296a40bab452bd6969b32bd5 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Thu, 9 Apr 2015 16:28:17 +0000
+Subject: [PATCH 11/12] Sometimes handle_userfault gets a fault that is on its
+ second try. It is reasonable that handle_userfault will allow another retry
+ because this can be the case when page was swapped out. This patch prevents
+ handle_userfault from returing SIGBUS when such as case occurs.
+
+---
+ fs/userfaultfd.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/fs/userfaultfd.c b/fs/userfaultfd.c
+index 821d684..e0afbb4 100644
+--- a/fs/userfaultfd.c
++++ b/fs/userfaultfd.c
+@@ -310,7 +310,19 @@ int handle_userfault(struct vm_area_struct *vma, unsigned long address,
+ 			dump_stack();
+ 		}
+ #endif
++		/*
++		 * Don't return SIGBUS when missing FAULT_FLAG_ALLOW_RETRY
++		 *
++		 * As noted above in commit message for userfaultfd
++		 * it may be the case that a fault comes in without
++		 * FAULT_FLAG_ALLOW_RETRY and with FAULT_FLAG_TRIES
++		 * set. This would cause an erroneuos SIGBUS for the
++		 * use case of a real application using userfault
++		 * backed areas (e.g. qemu). Letting fault proceed.
++
+ 		goto out;
++
++		 */
+ 	}
+ 
+ 	/*
+-- 
+1.8.3.1
+

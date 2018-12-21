@@ -1,0 +1,31 @@
+From 55c7b6231cfc94f4ed0d5d1fb2e05977ac19c87d Mon Sep 17 00:00:00 2001
+From: kernel build container <you@example.com>
+Date: Fri, 27 Oct 2017 19:06:10 +0000
+Subject: [PATCH] Update userfaultfd remap for 4.13
+
+In kernel 4.13, the function mmu_notifier_invalidate_page is replaced by
+mmu_notifier_invalidate_range. Update the usage in the remap patches.
+
+Re: change in commit:
+ea25c43179462e342d4a0e66c3f6a5f53514da05
+---
+ mm/userfaultfd.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mm/userfaultfd.c b/mm/userfaultfd.c
+index c88308e..0023026 100644
+--- a/mm/userfaultfd.c
++++ b/mm/userfaultfd.c
+@@ -729,7 +729,8 @@ static int remap_pages_pte(struct mm_struct *dst_mm,
+ 		/* unblock rmap walks */
+ 		unlock_page(src_page);
+ 
+-		mmu_notifier_invalidate_page(src_mm, src_addr);
++		mmu_notifier_invalidate_range(src_mm, src_addr,
++					      src_addr + PAGE_SIZE);
+ 	} else {
+ 		entry = pte_to_swp_entry(orig_src_pte);
+ 		if (non_swap_entry(entry)) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,5 @@
+*.d
+*.swp
+*.o
+Ctest_prog
+client

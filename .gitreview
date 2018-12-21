@@ -1,0 +1,4 @@
+[gerrit]
+host=numa1.cs.colorado.edu
+port=29418
+project=scaleos

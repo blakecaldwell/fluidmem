@@ -1,0 +1,91 @@
+From 9376243d5bb494eada8feca28456a7687645ef47 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Thu, 9 Apr 2015 15:50:33 +0000
+Subject: [PATCH] Switch from memory-backend-ram to memory-backend-elastic when
+ setting up hotplog objects with qemu. There is not the choice between the two
+ in the XML specificat... TODO
+
+---
+ src/qemu/qemu_capabilities.c | 3 +++
+ src/qemu/qemu_capabilities.h | 1 +
+ src/qemu/qemu_command.c      | 8 +++++---
+ 3 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/qemu/qemu_capabilities.c b/src/qemu/qemu_capabilities.c
+index ce6767c..6877e17 100644
+--- a/src/qemu/qemu_capabilities.c
++++ b/src/qemu/qemu_capabilities.c
+@@ -279,6 +279,8 @@ VIR_ENUM_IMPL(virQEMUCaps, QEMU_CAPS_LAST,
+               "qxl.vgamem_mb",
+               "qxl-vga.vgamem_mb",
+               "pc-dimm",
++
++              "memory-backend-elastic", /* 185 */
+     );
+ 
+ 
+@@ -1529,6 +1531,7 @@ struct virQEMUCapsStringFlags virQEMUCapsObjectTypes[] = {
+     { "usb-kbd", QEMU_CAPS_DEVICE_USB_KBD },
+     { "memory-backend-ram", QEMU_CAPS_OBJECT_MEMORY_RAM },
+     { "memory-backend-file", QEMU_CAPS_OBJECT_MEMORY_FILE },
++    { "memory-backend-elastic", QEMU_CAPS_OBJECT_MEMORY_ELASTIC },
+     { "usb-audio", QEMU_CAPS_OBJECT_USB_AUDIO },
+     { "iothread", QEMU_CAPS_OBJECT_IOTHREAD},
+     { "ivshmem", QEMU_CAPS_DEVICE_IVSHMEM },
+diff --git a/src/qemu/qemu_capabilities.h b/src/qemu/qemu_capabilities.h
+index c7b1ac7..7a27b95 100644
+--- a/src/qemu/qemu_capabilities.h
++++ b/src/qemu/qemu_capabilities.h
+@@ -224,6 +224,7 @@ typedef enum {
+     QEMU_CAPS_QXL_VGAMEM         = 182, /* -device qxl.vgamem_mb */
+     QEMU_CAPS_QXL_VGA_VGAMEM     = 183, /* -device qxl-vga.vgamem_mb */
+     QEMU_CAPS_DEVICE_PC_DIMM     = 184, /* pc-dimm device */
++    QEMU_CAPS_OBJECT_MEMORY_ELASTIC     = 185, /* memory-backend-elastic device */
+ 
+     QEMU_CAPS_LAST,                   /* this must always be the last item */
+ } virQEMUCapsFlags;
+diff --git a/src/qemu/qemu_command.c b/src/qemu/qemu_command.c
+index bcb54fa..69d4413 100644
+--- a/src/qemu/qemu_command.c
++++ b/src/qemu/qemu_command.c
+@@ -4744,7 +4744,7 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+             goto cleanup;
+         }
+ 
+-        *backendType = "memory-backend-ram";
++        *backendType = "memory-backend-elastic";
+     }
+ 
+     if (virJSONValueObjectAdd(props, "U:size", size * 1024, NULL) < 0)
+@@ -4772,10 +4772,10 @@ qemuBuildMemoryBackendStr(unsigned long long size,
+         bool nodeSpecified = virDomainNumatuneNodeSpecified(def->numa, guestNode);
+ 
+         if ((userNodeset || nodeSpecified || force) &&
+-            !virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_RAM)) {
++            !virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC)) {
+             virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                            _("this qemu doesn't support the "
+-                             "memory-backend-ram object"));
++                             "memory-backend-elastic object"));
+             goto cleanup;
+         }
+ 
+@@ -7356,6 +7356,7 @@ qemuBuildNumaArgStr(virQEMUDriverConfigPtr cfg,
+ 
+     if (virDomainNumatuneHasPerNodeBinding(def->numa) &&
+         !(virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_RAM) ||
++          virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC) ||
+           virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_FILE))) {
+         virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
+                        _("Per-node memory binding is not supported "
+@@ -7406,6 +7407,7 @@ qemuBuildNumaArgStr(virQEMUDriverConfigPtr cfg,
+      * need to check which approach to use */
+     for (i = 0; i < ncells; i++) {
+         if (virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_RAM) ||
++            virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_ELASTIC) ||
+             virQEMUCapsGet(qemuCaps, QEMU_CAPS_OBJECT_MEMORY_FILE)) {
+             if ((rc = qemuBuildMemoryCellBackendStr(def, qemuCaps, cfg, i,
+                                                     auto_nodeset,
+-- 
+2.1.0
+

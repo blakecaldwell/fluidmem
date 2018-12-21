@@ -1,0 +1,35 @@
+From 7a55e2f5d8c4faa200bc423e0615f7c5ff2fbb30 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Fri, 18 Sep 2015 00:15:28 +0000
+Subject: [PATCH] Add maxMemory for NUMA libvirt config
+
+---
+ nova/virt/libvirt/config.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/nova/virt/libvirt/config.py b/nova/virt/libvirt/config.py
+index d48abdc..5eff842 100644
+--- a/nova/virt/libvirt/config.py
++++ b/nova/virt/libvirt/config.py
+@@ -1791,6 +1791,7 @@ class LibvirtConfigGuest(LibvirtConfigObject):
+         self.uuid = None
+         self.name = None
+         self.memory = 500 * units.Mi
++        self.maxmem = 1099511627776 * units.Ki
+         self.membacking = None
+         self.memtune = None
+         self.numatune = None
+@@ -1826,6 +1827,10 @@ class LibvirtConfigGuest(LibvirtConfigObject):
+             root.append(self.memtune.format_dom())
+         if self.numatune is not None:
+             root.append(self.numatune.format_dom())
++            maxmem = self._text_node("maxMemory", self.maxmem)
++            maxmem.set("slots", str(4))
++            maxmem.set("unit", "KiB")
++            root.append(maxmem)
+         if self.cpuset is not None:
+             vcpu = self._text_node("vcpu", self.vcpus)
+             vcpu.set("cpuset", hardware.format_cpu_spec(self.cpuset))
+-- 
+1.8.3.1
+

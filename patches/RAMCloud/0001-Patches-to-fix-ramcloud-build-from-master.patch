@@ -1,0 +1,101 @@
+From a1623de376e630604506ba51d67b87e4e7f7548c Mon Sep 17 00:00:00 2001
+From: RAMCloud container <you@example.com>
+Date: Mon, 21 Mar 2016 21:52:45 +0000
+Subject: [PATCH] Patches to fix ramcloud build from master
+
+1. Remove ibv_qpt_raw_eth references
+2. Cast some values to uint32_t
+---
+ src/InfUdDriver.cc |  5 ++---
+ src/Infiniband.cc  | 22 ++++------------------
+ 3 files changed, 7 insertions(+), 22 deletions(-)
+
+diff --git a/src/InfUdDriver.cc b/src/InfUdDriver.cc
+index c71637c..82ecea5 100644
+--- a/src/InfUdDriver.cc
++++ b/src/InfUdDriver.cc
+@@ -130,8 +130,7 @@ InfUdDriver::InfUdDriver(Context* context,
+         throw DriverException(HERE, errno);
+     }
+ 
+-    qp = infiniband->createQueuePair(localMac ? IBV_QPT_RAW_ETH
+-                                              : IBV_QPT_UD,
++    qp = infiniband->createQueuePair(IBV_QPT_UD,
+                                      ibPhysicalPort, NULL,
+                                      txcq, rxcq, MAX_TX_QUEUE_DEPTH,
+                                      MAX_RX_QUEUE_DEPTH,
+diff --git a/src/Infiniband.cc b/src/Infiniband.cc
+index 93344f7..7f291f7 100644
+--- a/src/Infiniband.cc
++++ b/src/Infiniband.cc
+@@ -520,7 +520,7 @@ Infiniband::QueuePair::QueuePair(Infiniband& infiniband, ibv_qp_type type,
+       peerLid(0)
+ {
+     snprintf(peerName, sizeof(peerName), "?unknown?");
+-    if (type != IBV_QPT_RC && type != IBV_QPT_UD && type != IBV_QPT_RAW_ETH)
++    if (type != IBV_QPT_RC && type != IBV_QPT_UD)
+         throw TransportException(HERE, "invalid queue pair type");
+ 
+     ibv_qp_init_attr qpia;
+@@ -564,8 +564,6 @@ Infiniband::QueuePair::QueuePair(Infiniband& infiniband, ibv_qp_type type,
+         mask |= IBV_QP_QKEY;
+         mask |= IBV_QP_PKEY_INDEX;
+         break;
+-    case IBV_QPT_RAW_ETH:
+-        break;
+     default:
+         assert(0);
+     }
+@@ -683,7 +681,7 @@ void
+ Infiniband::QueuePair::activate(const Tub<MacAddress>& localMac)
+ {
+     ibv_qp_attr qpa;
+-    if (type != IBV_QPT_UD && type != IBV_QPT_RAW_ETH)
++    if (type != IBV_QPT_UD)
+         throw TransportException(HERE, "activate() called on wrong qp type");
+ 
+     if (getState() != IBV_QPS_INIT) {
+@@ -704,25 +702,13 @@ Infiniband::QueuePair::activate(const Tub<MacAddress>& localMac)
+     // now move to RTS state
+     qpa.qp_state = IBV_QPS_RTS;
+     int flags = IBV_QP_STATE;
+-    if (type != IBV_QPT_RAW_ETH) {
+-        qpa.sq_psn = initialPsn;
+-        flags |= IBV_QP_SQ_PSN;
+-    }
++    qpa.sq_psn = initialPsn;
++    flags |= IBV_QP_SQ_PSN;
+     ret = ibv_modify_qp(qp, &qpa, flags);
+     if (ret) {
+         LOG(ERROR, "failed to transition to RTS state");
+         throw TransportException(HERE, ret);
+     }
+-
+-    if (type == IBV_QPT_RAW_ETH) {
+-        ibv_gid mgid;
+-        memset(&mgid, 0, sizeof(mgid));
+-        memcpy(&mgid.raw[10], localMac->address, 6);
+-        if (ibv_attach_mcast(qp, &mgid, 0)) {
+-            LOG(ERROR, "failed to bind to mac address");
+-            throw TransportException(HERE, ret);
+-        }
+-    }
+ }
+ 
+ /**
+diff --git a/src/InfUdDriver.cc b/src/InfUdDriver.cc
+index 0a20b0c..9ae0313 100644
+--- a/src/InfUdDriver.cc
++++ b/src/InfUdDriver.cc
+@@ -214,7 +214,7 @@ InfUdDriver::~InfUdDriver()
+ uint32_t
+ InfUdDriver::getMaxPacketSize()
+ {
+-    const uint32_t eth = 1500 + 14 - sizeof32(EthernetHeader);
++    const uint32_t eth = 1500 + 14 - (uint32_t)sizeof32(EthernetHeader);
+     const uint32_t inf = 2048 - GRH_SIZE;
+     return localMac ? eth : inf;
+ }
+-- 
+1.8.3.1
+

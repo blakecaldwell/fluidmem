@@ -1,0 +1,84 @@
+From d1f9e3a7e287232bf00c374c45ad56a7f5873c94 Mon Sep 17 00:00:00 2001
+From: Andrea Arcangeli <aarcange@redhat.com>
+Date: Fri, 13 Feb 2015 01:22:37 +0100
+Subject: [PATCH 4/7] userfaultfd: UFFDIO_REMAP
+
+This remap ioctl allows to atomically move a page in or out of an
+userfaultfd address space. It's more expensive than "copy" (and of
+course more expensive than "zerofill") as it requires a TLB flush on
+the source range for each ioctl, which is an expensive operation on
+SMP. Especially if copying only a few pages at time, copying without
+TLB flush is faster.
+---
+ fs/userfaultfd.c | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/fs/userfaultfd.c b/fs/userfaultfd.c
+index 9e7ed0d..0f8c57b 100644
+--- a/fs/userfaultfd.c
++++ b/fs/userfaultfd.c
+@@ -1702,6 +1702,52 @@ static int userfaultfd_writeprotect(struct userfaultfd_ctx *ctx,
+ 	return ret;
+ }
+ 
++static int userfaultfd_remap(struct userfaultfd_ctx *ctx,
++			     unsigned long arg)
++{
++	__s64 ret;
++	struct uffdio_remap uffdio_remap;
++	struct uffdio_remap __user *user_uffdio_remap;
++	struct userfaultfd_wake_range range;
++
++	user_uffdio_remap = (struct uffdio_remap __user *) arg;
++
++	ret = -EFAULT;
++	if (copy_from_user(&uffdio_remap, user_uffdio_remap,
++			   /* don't copy "remap" last field */
++			   sizeof(uffdio_remap)-sizeof(__s64)))
++		goto out;
++
++	ret = validate_range(ctx->mm, uffdio_remap.dst, uffdio_remap.len);
++	if (ret)
++		goto out;
++	ret = validate_range(current->mm, uffdio_remap.src, uffdio_remap.len);
++	if (ret)
++		goto out;
++	ret = -EINVAL;
++	if (uffdio_remap.mode & ~(UFFDIO_REMAP_MODE_ALLOW_SRC_HOLES|
++				  UFFDIO_REMAP_MODE_DONTWAKE))
++		goto out;
++
++	ret = remap_pages(ctx->mm, current->mm,
++			  uffdio_remap.dst, uffdio_remap.src,
++			  uffdio_remap.len, uffdio_remap.mode);
++	if (unlikely(put_user(ret, &user_uffdio_remap->remap)))
++		return -EFAULT;
++	if (ret < 0)
++		goto out;
++	/* len == 0 would wake all */
++	BUG_ON(!ret);
++	range.len = ret;
++	if (!(uffdio_remap.mode & UFFDIO_REMAP_MODE_DONTWAKE)) {
++		range.start = uffdio_remap.dst;
++		wake_userfault(ctx, &range);
++	}
++	ret = range.len == uffdio_remap.len ? 0 : -EAGAIN;
++out:
++	return ret;
++}
++
+ static inline unsigned int uffd_ctx_features(__u64 user_features)
+ {
+ 	/*
+@@ -1781,6 +1827,9 @@ static long userfaultfd_ioctl(struct file *file, unsigned cmd,
+ 	case UFFDIO_ZEROPAGE:
+ 		ret = userfaultfd_zeropage(ctx, arg);
+ 		break;
++	case UFFDIO_REMAP:
++		ret = userfaultfd_remap(ctx, arg);
++		break;
+ 	}
+ 	return ret;
+ }
+-- 
+1.8.3.1

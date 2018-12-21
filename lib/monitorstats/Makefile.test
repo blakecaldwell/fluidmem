@@ -1,0 +1,20 @@
+all: monitorstats.c monitorstats.h test.c
+	clear
+
+	gcc -fpic -c -o monitorstats.o monitorstats.c
+	gcc -c -o test.o test.c
+
+	gcc -shared -o libmonitorstats.so monitorstats.o -lm
+
+	gcc -Wall -o test.exe test.o -L. -lmonitorstats
+
+	rm -rf *.o
+	ls -la *.exe
+clean:
+	rm -rf *~
+	rm -rf *.o
+	rm -rf *.exe
+	rm -rf *.out
+	rm -rf *.so
+	clear
+	ls -la

@@ -1,0 +1,77 @@
+From d3d6fac1e591fe64afd4f9f80646a3f008b4f6ec Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <blake.caldwell@colorado.edu>
+Date: Sun, 5 Apr 2015 16:25:38 +0000
+Subject: [PATCH] Add direction flag to the remap struct for UFFDIO_REMAP that
+ indicates which vma list to search. This is needed for the use case of
+ evicting a page from outside the context of the userfaultfd. For example:
+ eviction from a userfault vma in userfault_ctx->mm to a vma in current->mm,
+ requires that we validated the src page exists in the vma list of
+ userfault->mm, where move a page into the userfaultfd context requires that
+ the src page must exist in the vma list of current->mm and that the
+ destination page exist in the vma list of userfault_ctx->mm.
+
+---
+ fs/userfaultfd.c                 | 15 ++++++++++++---
+ include/uapi/linux/userfaultfd.h |  3 +++
+ 2 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/fs/userfaultfd.c b/fs/userfaultfd.c
+index 6b63fea..76140c5 100644
+--- a/fs/userfaultfd.c
++++ b/fs/userfaultfd.c
+@@ -1022,6 +1022,7 @@ static int userfaultfd_remap(struct userfaultfd_ctx *ctx,
+ 	struct uffdio_remap uffdio_remap;
+ 	struct uffdio_remap __user *user_uffdio_remap;
+ 	struct userfaultfd_wake_range range;
++	struct mm_struct *src_mm, *dst_mm;
+ 
+ 	user_uffdio_remap = (struct uffdio_remap __user *) arg;
+ 
+@@ -1030,11 +1031,19 @@ static int userfaultfd_remap(struct userfaultfd_ctx *ctx,
+ 			   /* don't copy "remap" last field */
+ 			   sizeof(uffdio_remap)-sizeof(__s64)))
+ 		goto out;
++		if (uffdio_remap.direction == UFFDIO_REMAP_DIRECTION_OUT) {
++			src_mm = ctx->mm;
++			dst_mm = current->mm;
++		}
++		else {
++			src_mm = current->mm;
++			dst_mm = ctx->mm;
++		}
+ 
+-	ret = validate_range(ctx->mm, uffdio_remap.dst, uffdio_remap.len);
++	ret = validate_range(dst_mm, uffdio_remap.dst, uffdio_remap.len);
+ 	if (ret)
+ 		goto out;
+-	ret = validate_range(current->mm, uffdio_remap.src, uffdio_remap.len);
++	ret = validate_range(src_mm, uffdio_remap.src, uffdio_remap.len);
+ 	if (ret)
+ 		goto out;
+ 	ret = -EINVAL;
+@@ -1042,7 +1051,7 @@ static int userfaultfd_remap(struct userfaultfd_ctx *ctx,
+ 				  UFFDIO_REMAP_MODE_DONTWAKE))
+ 		goto out;
+ 
+-	ret = remap_pages(ctx->mm, current->mm,
++	ret = remap_pages(dst_mm, src_mm,
+ 			  uffdio_remap.dst, uffdio_remap.src,
+ 			  uffdio_remap.len, uffdio_remap.mode);
+ 	if (unlikely(put_user(ret, &user_uffdio_remap->remap)))
+diff --git a/include/uapi/linux/userfaultfd.h b/include/uapi/linux/userfaultfd.h
+index aecd64b..44d0734 100644
+--- a/include/uapi/linux/userfaultfd.h
++++ b/include/uapi/linux/userfaultfd.h
+@@ -133,6 +133,9 @@ struct uffdio_remap {
+ #define UFFDIO_REMAP_MODE_DONTWAKE		((__u64)1<<0)
+ #define UFFDIO_REMAP_MODE_ALLOW_SRC_HOLES	((__u64)1<<1)
+ 	__u64 mode;
++#define UFFDIO_REMAP_DIRECTION_OUT              ((__u64)1<<0)
++#define UFFDIO_REMAP_DIRECTION_IN               ((__u64)1<<1)
++	__u64 direction;
+ 
+ 	/*
+ 	 * "remap" is written by the ioctl and must be at the end: the
+-- 
+2.1.0
+

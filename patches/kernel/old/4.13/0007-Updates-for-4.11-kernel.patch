@@ -1,0 +1,71 @@
+From d1201be306f053be1bb227143500b8045682b7f7 Mon Sep 17 00:00:00 2001
+From: Blake Caldwell <caldweba@colorado.edu>
+Date: Thu, 26 Jan 2017 08:31:54 +0000
+Subject: [PATCH 7/7] Updates for 4.11 kernel
+
+---
+ mm/huge_memory.c |  1 -
+ mm/userfaultfd.c | 14 +++++++-------
+ 2 files changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 919a12a..369d875 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1787,7 +1787,6 @@ int remap_pages_huge_pmd(struct mm_struct *dst_mm,
+ 	src_ptl = pmd_lockptr(src_mm, src_pmd);
+ 
+ 	BUG_ON(!pmd_trans_huge(src_pmdval));
+-	BUG_ON(pmd_trans_splitting(src_pmdval));
+ 	BUG_ON(!pmd_none(dst_pmdval));
+ 	BUG_ON(!spin_is_locked(src_ptl));
+ 	BUG_ON(!rwsem_is_locked(&src_mm->mmap_sem));
+diff --git a/mm/userfaultfd.c b/mm/userfaultfd.c
+index e40fbd1..c32f9b8 100644
+--- a/mm/userfaultfd.c
++++ b/mm/userfaultfd.c
+@@ -1010,7 +1010,8 @@ ssize_t remap_pages(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 			err = -EEXIST;
+ 			break;
+ 		}
+-		if (pmd_trans_huge_lock(src_pmd, src_vma, &ptl) == 1) {
++		ptl = pmd_trans_huge_lock(src_pmd, src_vma);
++		if (ptl) {
+ 			/*
+ 			 * Check if we can move the pmd without
+ 			 * splitting it. First check the address
+@@ -1028,8 +1029,8 @@ ssize_t remap_pages(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 			    src_start + len - src_addr < HPAGE_PMD_SIZE) {
+ 				spin_unlock(ptl);
+ 				/* Fall through */
+-				split_huge_page_pmd(src_vma, src_addr,
+-						    src_pmd);
++				split_huge_pmd(src_vma, src_pmd,
++						    src_addr);
+ 			} else {
+ 				BUG_ON(dst_addr & ~HPAGE_PMD_MASK);
+ 				err = remap_pages_huge_pmd(dst_mm,
+@@ -1065,8 +1066,8 @@ ssize_t remap_pages(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 				err = -ENOENT;
+ 				break;
+ 			} else {
+-				if (unlikely(__pte_alloc(src_mm, src_vma,
+-							 src_pmd, src_addr))) {
++				if (unlikely(__pte_alloc(src_mm, src_pmd, 
++							 src_addr))) {
+ 					err = -ENOMEM;
+ 					break;
+ 				}
+@@ -1085,8 +1086,7 @@ ssize_t remap_pages(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 		}
+ 
+ 		if (unlikely(pmd_none(dst_pmdval)) &&
+-		    unlikely(__pte_alloc(dst_mm, dst_vma, dst_pmd,
+-					 dst_addr))) {
++		    unlikely(__pte_alloc(dst_mm, dst_pmd, dst_addr))) {
+ 			err = -ENOMEM;
+ 			break;
+ 		}
+-- 
+1.8.3.1
+
