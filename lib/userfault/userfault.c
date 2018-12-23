@@ -458,19 +458,19 @@ int place_data_page(int ufd, void * dst, void * src) {
     ret = copy_struct.copy;
       switch(copy_struct.copy) {
         case EBUSY:
-          log_warn("%s: COPY ret: EBUSY, src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+          log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
           break;
         case ENOENT:
-          log_warn("%s: COPY ret: ENOENT, src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+          log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
           break;
         default:
-          log_err("%s: COPY src: %p, dst: %p, ufd: %d, size: %Lu", __func__, src, dst, ufd, copy_struct.copy);
+          log_err("%s: src: %p, dst: %p, ufd: %d, size: %Lu", __func__, src, dst, ufd, copy_struct.copy);
           break;
       }
     }
   }
   else {
-    log_debug("%s: COPY src: %p, dst %p", __func__, src, dst);
+    log_debug("%s: src: %p, dst %p", __func__, src, dst);
   }
 
   ret = evict_if_needed(ufd, dst, COPY_PAGE);
@@ -508,13 +508,13 @@ int place_zero_page(int ufd, void * dst) {
     ret = errno;
     switch(errno) {
       default:
-        log_err("%s: ZERO dst: %p, ufd: %d", __func__, dst, ufd);
+        log_err("%s: dst: %p, ufd: %d", __func__, dst, ufd);
         break;
     }
   }
 #ifdef DEBUG
   else {
-    log_debug("%s: ZERO dst %p", __func__, dst);
+    log_debug("%s: dst %p", __func__, dst);
   }
 #endif
 
@@ -551,19 +551,19 @@ int move_page(int ufd, void * dst, void * src) {
     ret = errno;
     switch(errno) {
       case EBUSY:
-        log_info("%s: REMAP ret: EBUSY, src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+        log_info("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
         break;
       case ENOENT:
-        log_warn("%s: REMAP src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+        log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
         break;
       default:
-        log_err("%s: REMAP src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+        log_err("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
         break;
     }
   }
 #ifdef DEBUG
   else {
-    log_debug("%s: REMAP src: %p, dst %p", __func__, src, dst);
+    log_debug("%s: src: %p, dst %p", __func__, src, dst);
   }
 #endif
 
@@ -596,27 +596,24 @@ int evict_page(int ufd, void * dst, void * src) {
       switch(errno) {
         case EBUSY:
           // tried evicting zeropage
-          log_info("%s: EVICT ret: EBUSY src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
+          log_info("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         case EEXIST:
-          log_warn("%s: EVICT ret: EEXIST src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
+          log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         case EINVAL:
           // tried evicting page from invalid userfault region (ufd closed or pid dead)
-          log_warn("%s: EVICT ret: EINVAL src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
-          break;
-        case ENOENT:
-          log_warn("%s: EVICT src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+          log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         default:
-          log_err("%s: EVICT src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+          log_err("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
           break;
       }
     }
   }
 #ifdef DEBUG
   else {
-    log_debug("%s: EVICT src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
+    log_debug("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
   }
 #endif
 
