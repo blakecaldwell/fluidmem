@@ -94,8 +94,6 @@ for cache_size in 1 1 1000 2048 2048 2048; do
   fi
   set -e
 
-  flush_monitor_buffers
-
   echo -e "\nStats from monitor:"
   stats=$(timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s)
 

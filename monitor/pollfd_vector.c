@@ -152,7 +152,6 @@ int del_fd (Pollfd_vector *vector, int fd) {
 		ret = 0;
 	}
 	else {
-		log_warn("%s: failed to find fd %d for removal from pollfd_vector", __func__, fd);
 		ret = -1;
 	}
 

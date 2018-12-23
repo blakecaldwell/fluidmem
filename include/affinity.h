@@ -13,13 +13,14 @@
 #include <errno.h>
 #include <unistd.h>
 
-#ifdef HWLOC 
+#ifdef HWLOC
 // not implememted yet
 
 #include <hwloc.h>
 hwloc_topology_t topology;
 #endif
 
+#include <dbg.h>
 /* define the CPU used for each thread */
 /* relative value to the default CPU */
 #define CPU_FOR_POLLING_THREAD 1
@@ -60,10 +61,12 @@ static inline void setAffinity(int start, int end)
 	if (s != 0)
 		handle_error_en(s, "pthread_getaffinity_np");
 
-	fprintf(stderr, "Set returned by pthread_getaffinity_np() contained:\n");
-	for (j = 0; j < CPU_SETSIZE; j++)
-		if (CPU_ISSET(j, &cpuset))
-			fprintf(stderr, "    CPU %d\n", j);
+	log_debug("%s: Set returned by pthread_getaffinity_np() contained:", __func__);
+	for (j = 0; j < CPU_SETSIZE; j++) {
+		if (CPU_ISSET(j, &cpuset)) {
+			log_debug("%s:    CPU %d", __func__, j);
+		}
+	}
 }
 
 static inline int getNthInCpuSet(int n)
@@ -95,7 +98,7 @@ static inline void setThreadCPUAffinity(int cpu_index, char * threadname, int ti
         int cores_per_numa_node = hwloc_get_nbobjs_by_depth(topology, 2);
 #else
         int cpu = getNthInCpuSet(cpu_index);
-	fprintf(stderr, "setting the CPU affinity of thread '%s' to %d. thread id : %d\n", threadname, cpu, tid); 
+	log_debug("%s: setting the CPU affinity of thread '%s' to %d. thread id : %d", __func__, threadname, cpu, tid);
 	setAffinity(cpu, cpu+1);
 #endif
 #endif
@@ -103,7 +106,7 @@ static inline void setThreadCPUAffinity(int cpu_index, char * threadname, int ti
 
 static inline void initTopology()
 {
-#ifdef HWLOC 
+#ifdef HWLOC
 	hwloc_topology_init(&topology);  // initialization
 	hwloc_topology_load(topology);   // actual detection
 #else

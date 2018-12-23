@@ -79,6 +79,7 @@ int getExternRAMUsage(ServerUsage ** usage);
 int resizeLRUBuffer(int size);
 int purgeDeadUpids(int ** ufd_list_ptr);
 int flush_lru(int ufd, int flush_or_delete);
+int flush_buffers(int ufd);
 int listPids(uint32_t ** pid_list_ptr);
 int removePid(uint32_t pidToRemove);
 

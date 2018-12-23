@@ -602,6 +602,7 @@ int evict_page(int ufd, void * dst, void * src) {
           log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         case EINVAL:
+        case ESRCH:
           // tried evicting page from invalid userfault region (ufd closed or pid dead)
           log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
@@ -663,6 +664,12 @@ int create_buffers()
   log_trace_in("%s", __func__);
 
   int ret = 0;
+
+  if (pthread_mutex_init(&zh_lock, NULL) != 0)
+  {
+    log_err("%s: zh lock init failed", __func__);
+    ret = -1;
+  }
 
   if (pthread_mutex_init(&fdUpidMap_lock, NULL) != 0)
   {
@@ -843,8 +850,9 @@ int evict_to_externram(int ufd, void * pageaddr) {
           retry--;
           break;
         case EINVAL:
+        case ESRCH:
           // tried evicting page from invalid userfault region (ufd closed or pid dead)
-          log_recoverable_err("%s: skipping page, rc: %d, pageaddr: %p", __func__, ret, pageaddr);
+          log_debug("%s: skipping page for invalid fd %d, rc: %d, pageaddr: %p", __func__, ufd, ret, pageaddr);
           ret = 1;
           retry = 0;
           break;
@@ -1211,6 +1219,7 @@ int flush_lru(int ufd, int flush_or_delete) {
 void clean_up_lock() {
   log_trace_in("%s", __func__);
 
+  pthread_mutex_destroy(&zh_lock);
   pthread_mutex_destroy(&lru_lock);
   pthread_mutex_destroy(&fdUpidMap_lock);
 #ifdef PAGECACHE
@@ -1357,7 +1366,14 @@ int recv_fd(int socket) {
     memcpy(&upid64, upid, sizeof(uint8_t) * 8);
     log_debug("%s: upid64=0x%llx", __func__, upid64);
 
+    log_lock("%s: locking zh_lock", __func__);
+    pthread_mutex_lock(&zh_lock);
+    log_lock("%s: locked zh_lock", __func__);
     ret=add_upid(zookeeperConn, upid64);
+    log_lock("%s: unlocking zh_lock", __func__);
+    pthread_mutex_unlock(&zh_lock);
+    log_lock("%s: unlocked zh_lock", __func__);
+
     if(ret==ZOOKEEPER_UPID_EXIST) {
       log_debug("%s: failed to add fd %d: upid 0x%llx already in zookeeper (%s). Trying with a different upid",
                 __func__, sent_fd, upid64, zookeeperConn);
@@ -1379,6 +1395,74 @@ int recv_fd(int socket) {
 out:
   log_trace_out("%s", __func__);
   return sent_fd;
+}
+
+int flush_buffers(int ufd) {
+  log_trace_in("%s", __func__);
+
+  int ret = 0;
+
+  // get_upid_by_fd needs to be called before taking fdUpidMap_lock
+  uint64_t upid = get_upid_by_fd(ufd);
+  if (upid == 0) {
+    log_debug("%s ufd %d not found in fdUpidMap", __func__, ufd);
+    return -1;
+  }
+
+  log_lock("%s: locking fdUpidMap_lock", __func__);
+  pthread_mutex_lock(&fdUpidMap_lock);
+  log_lock("%s: locked fdUpidMap_lock", __func__);
+
+  if (del_fd_from_map(ufd) < 0) {
+    log_debug("%s: failed to remove dead ufd %d from upid map", __func__, ufd);
+  }
+  else {
+    log_debug("%s: removed ufd %d from the upid map", __func__, ufd);
+  }
+
+  // remove upid from zookeeper
+  log_lock("%s: locking zh_lock", __func__);
+  pthread_mutex_lock(&zh_lock);
+  log_lock("%s: locked zh_lock", __func__);
+  if (del_upid(zookeeperConn, upid) < 0) {
+    log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, upid);
+  }
+  log_lock("%s: unlocking zh_lock", __func__);
+  pthread_mutex_unlock(&zh_lock);
+  log_lock("%s: unlocked zh_lock", __func__);
+
+  log_lock("%s: unlocking fdUpidMap_lock", __func__);
+  pthread_mutex_unlock(&fdUpidMap_lock);
+  log_lock("%s: unlocked fdUpidMap_lock", __func__);
+
+
+#ifdef THREADED_WRITE_TO_EXTERNRAM
+  // flush write_list
+  log_lock("%s: locking flush_write_needed_lock", __func__);
+  pthread_mutex_lock(&flush_write_needed_lock);
+  log_lock("%s: locked flush_write_needed_lock", __func__);
+
+  flushWriteListNeeded = true;
+
+  log_lock("%s: unlocking flush_write_needed_lock", __func__);
+  pthread_mutex_unlock(&flush_write_needed_lock);
+  log_lock("%s: unlocked flush_write_needed_lock", __func__);
+
+  sem_post(&writer_sem);
+  log_lock("%s: sem_posted writer_sem", __func__);
+
+  log_lock("%s: sem_waiting flushed_write_sem", __func__);
+  sem_wait(&flushed_write_sem);
+  log_lock("%s: sem_waited flushed_write_sem", __func__);
+#endif
+
+  if (flush_lru(ufd, DELETE_FROM_EXTERNRAM) < 0) {
+    log_debug("%s: failed to flush entries for dead ufd %d", __func__, ufd);
+    return -1;
+  }
+
+  log_trace_out("%s", __func__);
+  return ret;
 }
 
 int purgeDeadUpids(int ** ufd_list_ptr) {
@@ -1443,9 +1527,15 @@ int purgeDeadUpids(int ** ufd_list_ptr) {
         }
 
         // remove upid from zookeeper
+        log_lock("%s: locking zh_lock", __func__);
+        pthread_mutex_lock(&zh_lock);
+        log_lock("%s: locked zh_lock", __func__);
         if (del_upid(zookeeperConn, current->upid) < 0) {
           log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, current->upid);
         }
+        log_lock("%s: unlocking zh_lock", __func__);
+        pthread_mutex_unlock(&zh_lock);
+        log_lock("%s: unlocked zh_lock", __func__);
       }
     }
   }
@@ -1527,9 +1617,15 @@ int removePid(uint32_t pidToRemove) {
         }
 
         // remove upid from zookeeper
+        log_lock("%s: unlocking zh_lock", __func__);
+        pthread_mutex_unlock(&zh_lock);
+        log_lock("%s: unlocked zh_lock", __func__);
         if (del_upid(zookeeperConn, current->upid) < 0) {
           log_warn("%s: failed to remove dead upid 0x%llx from zookeeper", __func__, current->upid);
         }
+        log_lock("%s: locking zh_lock", __func__);
+        pthread_mutex_lock(&zh_lock);
+        log_lock("%s: locked zh_lock", __func__);
 
         // there's only one pid to remove, so we're done
         rc = 0;

@@ -40,6 +40,8 @@ static zhandle_t *zh=NULL;
 static clientid_t myid;
 static int shutdownThisThing=0;
 
+pthread_mutex_t zh_lock;
+
 void initialize()
 {
     log_trace_in("%s", __func__);
@@ -132,7 +134,7 @@ int add_upid(const char *hp, uint64_t upid) {
             }
 add_retry:
             log_debug("%s: retrying", __func__);
-            sleep(1+pow(2,10-attemptCnt));
+            usleep(20);
         }
 add_reconnect:
         log_debug("%s: reconnecting", __func__);
@@ -170,14 +172,10 @@ int del_upid(const char * hp, uint64_t upid) {
         }
         while(!shutdownThisThing) {
             rc = zoo_exists(zh, upidFullPath, 0, &stat);
-            if( rc==ZNONODE )
-            {
-                zookeeper_close(zh);
-                log_trace_out("%s", __func__);
-                return ZOOKEEPER_UPID_ERR;
-            } else if( rc!=ZOK )
-                goto del_retry;
-
+            if( rc!=ZOK ) {
+                log_debug("%s: zoo_exists returned: %s", __func__, zerror(rc));
+                goto del_out;
+            }
             rc = zoo_delete(zh, upidFullPath, -1);
             if( rc==ZOK )
             {
@@ -185,14 +183,18 @@ int del_upid(const char * hp, uint64_t upid) {
                 log_trace_out("%s", __func__);
                 return ZOOKEEPER_UPID_OK;
             }
+            log_debug("%s: zoo_delete returned: %s", __func__, zerror(rc));
 del_retry:
             log_debug("%s: retrying", __func__);
-            sleep(1+pow(2,10-attemptCnt));
+            usleep(20);
         }
 del_reconnect:
         log_debug("%s: reconnecting", __func__);
         sleep(1+pow(2,10-attemptCnt));
     }
+
+    log_debug("%s: out of retries", __func__);
+del_out:
     if( zh!=NULL )
         zookeeper_close(zh);
 

@@ -175,24 +175,11 @@ void *remove_ufd_handler(void *userfault_fd) {
   setThreadCPUAffinity(CPU_FOR_REMOVE_UFD_HANDLER_THREAD, "remove_ufd_handler", TID());
 
   int ufd = *(int*)userfault_fd;
-  uint64_t ufd64 = (uint64_t) ufd;
-
-  log_debug("%s: writing ufd %llu (%d) to reload_removefd", __func__, ufd64, ufd);
-
-  log_lock("%s: locking remove_fd_lock",  __func__);
-  pthread_mutex_lock(&pollfd_vector.remove_fd_lock);
-  log_lock("%s: locked remove_fd_lock",  __func__);
-
-  if (write(pollfd_vector.reload_removefd, &ufd64, sizeof(uint64_t)) != sizeof(uint64_t)) {
-    log_lock("%s: unlocking remove_fd_lock",  __func__);
-    pthread_mutex_unlock(&pollfd_vector.remove_fd_lock);
-    log_lock("%s: unlocked remove_fd_lock",  __func__);
-
-    log_err("%s: failed to write ufd %llu to reload_removefd", __func__, ufd64);
-    goto exit;
+  log_info("%s: started remove_ufd_handler for ufd %d", __func__, ufd);
+  if (flush_buffers(ufd) != 0) {
+    log_debug("%s: flush_buffers failed", __func__);
   }
 
-exit:
   num_threads--;
   free(userfault_fd);
   log_trace_out("%s", __func__);
@@ -260,17 +247,19 @@ int handle_userfault(int ufd) {
       else if (ret > 0) {
         // there was a problem reading from this ufd, so remove from poll list
         // ufd is contained in ret
+        log_debug("%s: removing fd %d from pollfd_vector", __func__, ret);
+        if (del_fd(&pollfd_vector, ret) == 0) {
+          int * fd = malloc(sizeof(*fd));
+          *fd = ret;
 
-        int * fd = malloc(sizeof(*fd));
-        *fd = ufd;
-
-        num_threads++;
-        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-        if (rc) {
-          num_threads--;
-          log_err("return code from remove_ufd_handler() is %d", rc);
-          discard_timing();
-          return rc;
+          num_threads++;
+          rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
+          if (rc) {
+            num_threads--;
+            log_err("return code from remove_ufd_handler() is %d", rc);
+            discard_timing();
+            return rc;
+          }
         }
       }
 
@@ -284,16 +273,21 @@ int handle_userfault(int ufd) {
     case UFFD_EVENT_FORK:
     case UFFD_EVENT_REMAP:
       log_warn("%s: Read event %u from uffd (%d)", __func__, msg.event, ufd);
-      int * fd = malloc(sizeof(*fd));
-      *fd = ufd;
 
-      num_threads++;
-      rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-      if (rc) {
-        num_threads--;
-        log_err("return code from remove_ufd_handler() is %d", rc);
-        return rc;
+      log_debug("%s: removing fd %d from pollfd_vector", __func__, ufd);
+      if (del_fd(&pollfd_vector, ufd) == 0) {
+        int * fd = malloc(sizeof(*fd));
+        *fd = ufd;
+
+        num_threads++;
+        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
+        if (rc) {
+          num_threads--;
+          log_err("return code from remove_ufd_handler() is %d", rc);
+          return rc;
+        }
       }
+
       break;
     default:
       log_err("%s: Read unexpected event %u from uffd (%d)", __func__, msg.event, ufd);
@@ -400,8 +394,20 @@ void poll_on_ufds(void) {
       }
       log_debug("%s: read fd %d from reload_removefd", __func__, ufd);
 
-      // not concerned with return value of del_fd
-      del_fd(&pollfd_vector, ufd);
+      log_debug("%s: removing fd %d from pollfd_vector", __func__, ufd);
+      if (del_fd(&pollfd_vector, ufd) == 0) {
+        int * fd = malloc(sizeof(*fd));
+        *fd = ufd;
+
+        num_threads++;
+        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
+        if (rc) {
+          num_threads--;
+          log_err("return code from remove_ufd_handler() is %d", rc);
+          return;
+        }
+      }
+
     }
 
     /* pollfd_vector.list[0] is reload_addfd */
@@ -484,12 +490,15 @@ void *reaper_thread(void * tmp) {
       int * fd = malloc(sizeof(*fd));
       *fd = (*ufd_list_ptr)[i];
 
-      num_threads++;
-      rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
-      if (rc) {
-        num_threads--;
-        log_err("return code from remove_ufd_handler() is %d",rc);
-        pthread_exit(NULL);
+      log_debug("%s: removing fd %d from pollfd_vector", __func__, *fd);
+      if (del_fd(&pollfd_vector, *fd) == 0) {
+        num_threads++;
+        rc = pthread_create(&workers[num_threads], NULL, remove_ufd_handler, fd);
+        if (rc) {
+          num_threads--;
+          log_err("return code from remove_ufd_handler() is %d", rc);
+          break;
+        }
       }
     }
 
