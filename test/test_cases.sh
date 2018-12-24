@@ -6,7 +6,8 @@
 # 3) fault test, cache size 1000, region size 1000, unique writes 1000, cycles 100
 # 4) fault test, cache size 2048, region size 4096, unique writes 4096, cycles 1
 # 5) threaded fault test, cache size 2048, region size 4096, cycles 1
-# 6) threaded-threaded fault test, cache size 2048, region size 20*4000, cycles 5
+# 6) threaded-threaded fault test, cache size 2048, region size 20*1000, cycles 5
+# 7) fault test, cache size 2048, region size 4096, cycles 5, reduce lru to 1
 
 if [[ "$1" == "skip_threaded" ]]; then
   echo "Command line with skip_threaded. Skipping multi-threaded (and again threaded) workload test"
@@ -56,6 +57,8 @@ declare -a test_case_5_stats_name=( "LRU Buffer Capacity" "Total Page Fault Coun
 declare -a test_case_5_stats_value=( 2048 8192 4096 4096 6144 8192 )
 declare -a test_case_6_stats_name=( "LRU Buffer Capacity" "Writes Avoided" )
 declare -a test_case_6_stats_value=( 2048 450 )
+declare -a test_case_7_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
+declare -a test_case_7_stats_value=( 1 40960 4096 36864 40959 40960 )
 
 declare -a stats
 
@@ -64,7 +67,7 @@ declare -a stats
 start_monitor "$LOG" "$LOCATOR"  "$ZOOKEEPER"
 
 let test_case=1
-for cache_size in 1 1 1000 2048 2048 2048; do
+for cache_size in 1 1 1000 2048 2048 2048 2048; do
   echo "***************"
   echo "running test $test_case with cache size $cache_size"
   echo
@@ -79,6 +82,11 @@ for cache_size in 1 1 1000 2048 2048 2048; do
   echo "Running test_cases for case $test_case"
   time /fluidmem/build/bin/test_cases $test_case &
   test_pid=$!
+
+  if [[ ${test_case} -eq "7" ]]; then
+    sleep 2;
+    resize_monitor 1:
+  fi
 
   wait_for_monitor 1 "$pid" "${test_pid}"
   # will return when test_pid is done

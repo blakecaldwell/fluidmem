@@ -104,8 +104,10 @@ do
 
   for ((test_num=1;test_num<=2;test_num++))
   do
+    # always start with large cache sizee
+    resize_monitor ${!CACHE_SIZE}
+
     if [[ "$test_num" -eq "2" ]]; then
-      resize_monitor ${!CACHE_SIZE}
       filename="test_readahead_${!CACHE_SIZE}"
     else
       filename="test_readahead_1"
@@ -133,6 +135,11 @@ do
     eval $cmd
     test_pid=$!
 
+    if [[ "$test_num" -eq "1" ]]; then
+      # for first test run, reduce cache size to 1
+      sleep 1
+      resize_monitor 1
+    fi
     wait_for_monitor 1 "$pid" "${test_pid}"
     # will return when test_pid is done
 

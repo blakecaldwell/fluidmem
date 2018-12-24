@@ -342,6 +342,14 @@ int main (int argc, char *argv[]) {
             ret = start_threaded_fault_test(num_allocations, 1000, 5);
             pthread_barrier_destroy(&finish_barrier);
         }
+        else if (test == 7) {
+            // fault test, cache size 2048, region size 4096, cycles 5, reduce lru to 1
+            num_allocations = 1;
+
+            pthread_barrier_init(&finish_barrier, NULL, num_allocations);
+            ret = fault_test(4096, 4096, 5);
+            pthread_barrier_destroy(&finish_barrier);
+        }
         else {
             print_usage();
             ret = -1;
