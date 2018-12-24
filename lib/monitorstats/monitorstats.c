@@ -64,6 +64,8 @@ inline void StatsClear()
         _pstats->page_cache_miss_count = 0;
         _pstats->last_fault_count = 0;
 	_pstats->last_page_fault = (struct timeval){ 0 };
+        _pstats->writes_skipped_zero = 0;
+        _pstats->writes_skipped_invalid = 0;
         _StatsSetLastTime();
 
 #ifdef TIMING

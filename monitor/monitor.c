@@ -523,6 +523,7 @@ void *new_ufd_handler(void *userfault_fd) {
 
   int ufd = *(int*)userfault_fd;
   uint64_t ufd64 = (uint64_t) ufd;
+  log_info("%s: started new_ufd_handler for ufd %d", __func__, ufd);
 
   log_lock("%s: locking add_fd_lock",  __func__);
   pthread_mutex_lock(&pollfd_vector.add_fd_lock);

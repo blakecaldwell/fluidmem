@@ -250,7 +250,9 @@ void *ui_processing_thread(void * tmp)
           fprintf(out,"Cache Hit Count:\t%lu\n", StatsGetStat(CACHE_HIT));
           fprintf(out,"Cache Miss Count:\t%lu\n", StatsGetStat(CACHE_MISS));
           fprintf(out,"Cache Hit Percentage:\t%lu\n", StatsGetStat(CACHE_HITRATIO));
-          fprintf(out,"Writes Avoided:\t%lu\n", StatsGetStat(WRITES_AVOIDED));
+          fprintf(out,"Writes Avoided:\t\t%lu\n", StatsGetStat(WRITES_AVOIDED));
+          fprintf(out,"Zero Pages Left:\t%lu\n", StatsGetStat(WRITES_SKIPPED_ZERO));
+          fprintf(out,"Invalid Pages Dropped:\t%lu\n", StatsGetStat(WRITES_SKIPPED_INVALID));
           fprintf(out,"Page Fault Rate:\t%f\n", StatsGetRate());
 
 	  tv = StatsGetLastFaultTime();

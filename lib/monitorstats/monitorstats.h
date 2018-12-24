@@ -38,7 +38,9 @@ typedef enum _StatisticToRetreive
     LRU_BUFFERSIZE,
     LRU_BUFFERCAP,
     NUM_UFDS,
-    WRITES_AVOIDED
+    WRITES_AVOIDED,
+    WRITES_SKIPPED_ZERO,
+    WRITES_SKIPPED_INVALID
 } StatisticToRetreive;
 
 
@@ -49,6 +51,8 @@ typedef struct _MonitorStats
     unsigned long placed_data_pages_count;
     unsigned long page_eviction_count;
     unsigned long writes_avoided;
+    unsigned long writes_skipped_zero;
+    unsigned long writes_skipped_invalid;
     unsigned long page_cache_hits_count;
     unsigned long page_cache_miss_count;
     char pad_0[40];
@@ -106,6 +110,18 @@ static inline void StatsIncrWriteAvoided_notlocked()
 {
         // increment writes avoided
         _pstats->writes_avoided++;
+}
+
+static inline void StatsIncrWriteSkippedZero_notlocked()
+{
+        // increment writes avoided
+        _pstats->writes_skipped_zero++;
+}
+
+static inline void StatsIncrWriteSkippedInvalid_notlocked()
+{
+        // increment writes avoided
+        _pstats->writes_skipped_invalid++;
 }
 
 static inline void StatsIncrLRUBufferSize()
@@ -189,6 +205,16 @@ static inline unsigned long StatsGetPageEvicted_notlocked()
 static inline unsigned long StatsGetWriteAvoided_notlocked()
 {
         return _pstats->writes_avoided;
+}
+
+static inline unsigned long StatsGetWriteSkippedZero_notlocked()
+{
+        return _pstats->writes_skipped_zero;
+}
+
+static inline unsigned long StatsGetWriteSkippedInvalid_notlocked()
+{
+        return _pstats->writes_skipped_invalid;
 }
 
 static inline unsigned long StatsGetLRUBufferSize()
@@ -321,6 +347,16 @@ static inline unsigned long StatsGetStat(StatisticToRetreive statToRetrieve)
                 case WRITES_AVOIDED:
                 {
                         ret = StatsGetWriteAvoided_notlocked();
+                        break;
+                }
+                case WRITES_SKIPPED_ZERO:
+                {
+                        ret = StatsGetWriteSkippedZero_notlocked();
+                        break;
+                }
+                case WRITES_SKIPPED_INVALID:
+                {
+                        ret = StatsGetWriteSkippedInvalid_notlocked();
                         break;
                 }
         }

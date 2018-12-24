@@ -165,7 +165,7 @@ void *write_into_externram_thread(void * tmp) {
         stop_timing(start, end, WRITE_PAGES);
       }
       else
-        log_warn("%s: skipping writing %d pages belonging to invalid fd %d", __func__, numWrite, ufd);
+        log_debug("%s: skipping writing %d pages belonging to invalid fd %d", __func__, numWrite, ufd);
 
       log_lock("%s: locking list_lock", __func__);
       pthread_mutex_lock(&list_lock);
@@ -396,12 +396,18 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
       log_debug("%s: eviction of page %p succeeded", __func__,  (void*)(uintptr_t)key);
     }
     else if (ret2 == 1) {
-      log_info("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
+#ifdef MONITORSTATS
+      StatsIncrWriteSkippedInvalid_notlocked();
+#endif
+      log_debug("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
 
       // return ufd of skipped page to caller
       ret = node.ufd;
     }
     else if (ret2 == 2) {
+#ifdef MONITORSTATS
+      StatsIncrWriteSkippedZero_notlocked();
+#endif
       log_info("%s: tried evicting zeropage %p from ufd %d, putting it back on lrubuffer", __func__, (void*)(uintptr_t)key, node.ufd);
       log_lock("%s: locking lru_lock", __func__);
       pthread_mutex_lock(&lru_lock);
@@ -596,7 +602,7 @@ int evict_page(int ufd, void * dst, void * src) {
       switch(errno) {
         case EBUSY:
           // tried evicting zeropage
-          log_info("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
+          log_debug("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         case EEXIST:
           log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
@@ -604,7 +610,7 @@ int evict_page(int ufd, void * dst, void * src) {
         case EINVAL:
         case ESRCH:
           // tried evicting page from invalid userfault region (ufd closed or pid dead)
-          log_warn("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
+          log_debug("%s: src: %p, dst %p, ufd: %d", __func__, src, dst, ufd);
           break;
         default:
           log_err("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
@@ -959,7 +965,7 @@ int evict_to_externram(int ufd, void * pageaddr) {
     // tried evicting zeropage. feign successful eviction
     log_debug("%s: Skipping writing the zeropage at (%p fd %d) to externRAM.", __func__,
               pageaddr, ufd);
-    log_debug("%s: lrubuffer size is %d", __func__, getLRUBufferSize(lru));
+    log_debug("%s: lrubuffer may exceed capacity. size is %d", __func__, getLRUBufferSize(lru));
     ret = 0;
 #ifdef PAGECACHE
     start_timing_bucket(start, UPDATE_PAGE_CACHE);
@@ -1329,7 +1335,7 @@ int recv_fd(int socket) {
     if (control_message->cmsg_level == SOL_SOCKET) {
       if (control_message->cmsg_type == SCM_RIGHTS) {
         sent_fd = *((int *) CMSG_DATA(control_message));
-        log_info("%s: received fd %d", __func__, sent_fd);
+        log_debug("%s: received fd %d", __func__, sent_fd);
       }
     }
   }
