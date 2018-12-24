@@ -28,7 +28,7 @@ extern "C" {
   struct c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd) {
     return l->insertCacheNode(key, ufd);
   }
-  int popNLRU(LRUBuffer *l, int num_pop, c_cache_node * node_list) {
+  int popNLRU(LRUBuffer *l, int num_pop, c_cache_node ** node_list) {
     return l->popNLRU(num_pop, node_list);
   }
   c_cache_node getLRU(LRUBuffer *l) {

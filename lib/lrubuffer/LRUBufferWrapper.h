@@ -23,7 +23,7 @@ LRUBuffer* newLRUBuffer();
 
 c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd);
 void referenceCachedNode(LRUBuffer *l, uint64_t key, int ufd);
-int popNLRU(LRUBuffer *l, int num_pop, c_cache_node * node_list);
+int popNLRU(LRUBuffer *l, int num_pop, c_cache_node ** node_list);
 c_cache_node getLRU(LRUBuffer *l);
 int isLRUSizeExceeded(LRUBuffer *l);
 int getLRUBufferSize(LRUBuffer *l);

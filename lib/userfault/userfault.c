@@ -705,9 +705,9 @@ int evict_to_externram_multi(int size)
 
   uint64_t key;
   int cnt = 0; // number of actually evicted pages
-  struct c_cache_node * node_list;
+  struct c_cache_node ** node_list_ptr = malloc(sizeof(struct c_cache_node *));
 
-  int num_to_evict = popNLRU(lru, size, node_list);
+  int num_to_evict = popNLRU(lru, size, node_list_ptr);
   if (size > num_to_evict) {
     log_warn("%s: the LRUBuffer has %d pages, less than the number of pages to be evicted (%d).",
             __func__, num_to_evict, size);
@@ -716,10 +716,9 @@ int evict_to_externram_multi(int size)
   int i = 0;
   for(; i < size; i++)
   {
-    struct c_cache_node node = getLRU(lru);
-    key = node_list[i].hashcode & (uint64_t)(PAGE_MASK);
+    key = (*node_list_ptr)[i].hashcode & (uint64_t)(PAGE_MASK);
 
-    int ret = evict_to_externram(node_list[i].ufd, (void*)(uintptr_t)key);
+    int ret = evict_to_externram((*node_list_ptr)[i].ufd, (void*)(uintptr_t)key);
     if (ret == 0) {
       log_debug("%s: eviction of page %p succeeded", __func__, (void*)(uintptr_t)key);
       cnt++;
@@ -735,6 +734,9 @@ int evict_to_externram_multi(int size)
     }
   }
 
+  if (*node_list_ptr)
+    free(*node_list_ptr);
+  free(node_list_ptr);
   log_trace_out("%s", __func__);
   return cnt;
 }

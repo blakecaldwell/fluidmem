@@ -108,7 +108,7 @@ c_cache_node LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
   return return_node;
 }
 
-int LRUBufferImpl::popNLRU(int num_pop, c_cache_node * node_list) {
+int LRUBufferImpl::popNLRU(int num_pop, c_cache_node ** node_list) {
   log_trace_in("%s", __func__);
 
   int i = 0;
@@ -117,12 +117,12 @@ int LRUBufferImpl::popNLRU(int num_pop, c_cache_node * node_list) {
   if (num_pop > lru_size)
     num_pop = lru_size;
 
-  node_list = (c_cache_node *) malloc(sizeof(c_cache_node) * lru_size);
+  *node_list = (c_cache_node *) malloc(sizeof(c_cache_node) * num_pop);
 
   for (i = 0; i < num_pop; i++) {
     c_cache_node node = popLRU();
-    node_list[i].ufd = node.ufd;
-    node_list[i].hashcode = node.hashcode;
+    (*node_list)[i].ufd = node.ufd;
+    (*node_list)[i].hashcode = node.hashcode;
   }
 
   log_trace_out("%s", __func__);

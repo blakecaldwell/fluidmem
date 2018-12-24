@@ -29,7 +29,7 @@ public:
     // API with clients
     virtual struct c_cache_node insertCacheNode(uint64_t key, int ufd){};
     virtual void                referenceCachedNode(uint64_t key, int ufd){};
-    virtual int                 popNLRU(int num_pop, c_cache_node * node_list){};
+    virtual int                 popNLRU(int num_pop, c_cache_node ** node_list){};
     virtual struct c_cache_node getLRU(){};
     virtual int                 isLRUSizeExceeded(void){};
     virtual int                 getSize(){};
