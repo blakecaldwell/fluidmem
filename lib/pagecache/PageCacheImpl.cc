@@ -421,6 +421,8 @@ read_page_if_in_page_cache_out:
 
 void PageCacheImpl::updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool zeroPage)
 {
+  log_trace_in("%s", __func__);
+
   char t[sizeof(uint64_t)+sizeof(int)];
   *((uint64_t*) &t[0]) = hashcode;
   *((int*) &t[sizeof(uint64_t)]) = fd;
@@ -534,6 +536,38 @@ void PageCacheImpl::invalidatePageCache( uint64_t hashcode, int fd )
   log_debug("%s: removing cache for page %lx fd %d", __func__, hashcode, fd);
 
   log_trace_out("%s", __func__);
+}
+
+uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
+  log_trace_in("%s", __func__);
+
+  std::vector<uint64_t> keyVector;
+  uint64_t * keyList;
+  const char * t;
+  uint64_t hashcode;
+  int ufd; 
+
+  page_hash::iterator itr = pagehash.begin();
+  int i=0;
+  for ( ; itr!= pagehash.end(); itr++, i++ ) {
+    t = itr->first.c_str();
+    hashcode = *((uint64_t*) &t[0]);
+    ufd = *((int*) &t[sizeof(uint64_t)]);
+    if (ufd == fd) {
+      keyVector.push_back(hashcode & (uint64_t)(PAGE_MASK));
+      pagehash.erase(itr);
+    }
+  }
+  *numPages = keyVector.size();
+
+  // populate the memory region to be returned to libuserfault
+  keyList = (uint64_t *)malloc(keyVector.size() * sizeof(uint64_t));
+  for(std::vector<uint64_t>::size_type i = 0; i != keyVector.size(); i++) {
+     memcpy(&keyList[i], &keyVector[i], sizeof(uint64_t));
+  }
+
+  log_trace_out("%s", __func__);
+  return keyList;
 }
 
 uint64_t * PageCacheImpl::removeUFDFromPageCache(int fd, int * numPages) {

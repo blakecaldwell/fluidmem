@@ -54,4 +54,8 @@ extern "C" {
   {
     pageCache->removeUFDFromPageCache( fd, numPages);
   }
+  uint64_t * removeUFDFromPageHash( PageCache * pageCache, int fd, int * numPages )
+  {
+    pageCache->removeUFDFromPageHash( fd, numPages);
+  }
 }

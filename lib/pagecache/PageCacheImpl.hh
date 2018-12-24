@@ -194,5 +194,6 @@ public:
     virtual void updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool zeroPage );
     virtual void invalidatePageCache( uint64_t hashcode, int fd );
     virtual uint64_t * removeUFDFromPageCache( int fd, int * numPages );
+    virtual uint64_t * removeUFDFromPageHash( int fd, int * numPages );
 };
 #endif

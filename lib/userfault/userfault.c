@@ -1192,15 +1192,19 @@ int flush_lru(int ufd, int flush_or_delete) {
   log_lock("%s: locked pagecache_lock", __func__);
 
   page_list = removeUFDFromPageCache(pageCache, ufd, &num_pages);
+  if ( num_pages < 0) {
+    log_err("%s: failed trying to remove entries for UFD %d from PageCache", __func__, ufd);
+  }
+  page_list = removeUFDFromPageHash(pageCache, ufd, &num_pages);
+  if ( num_pages < 0) {
+    log_err("%s: failed trying to remove entries for UFD %d from PageHash", __func__, ufd);
+  }
 
   log_lock("%s: unlocking pagecache_lock", __func__);
   pthread_mutex_unlock(&pagecache_lock);
   log_lock("%s: unlocked pagecache_lock", __func__);
 
-  if ( num_pages < 0) {
-    log_err("%s: failed trying to remove entries for UFD %d from PageCache", __func__, ufd);
-  }
-  else if (num_pages > 0) {
+  if (num_pages > 0) {
     log_debug("%s: removed %d tracked pages", __func__, num_pages);
     free(page_list);
   }

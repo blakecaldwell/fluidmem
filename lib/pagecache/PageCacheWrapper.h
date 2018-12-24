@@ -34,6 +34,7 @@ void addPageHashNode( uint64_t hashcode, int fd, int ownership );
 void pageCacheCleanup();
 void storePagesInPageCache( PageCache * pageCache, uint64_t * hashcodes, int fd, int num_pages, char ** bufs, int * lengths);
 uint64_t * removeUFDFromPageCache( PageCache * pageCache, int fd, int * numPages );
+uint64_t * removeUFDFromPageHash( PageCache * pageCache, int fd, int * numPages );
 
 #ifdef __cplusplus
 }
