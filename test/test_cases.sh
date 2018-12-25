@@ -55,8 +55,8 @@ declare -a test_case_4_stats_name=( "LRU Buffer Capacity" "Total Page Fault Coun
 declare -a test_case_4_stats_value=( 2048 8192 4096 4096 6144 8192 )
 declare -a test_case_5_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_5_stats_value=( 2048 8192 4096 4096 6144 8192 )
-declare -a test_case_6_stats_name=( "LRU Buffer Capacity" "Writes Avoided" )
-declare -a test_case_6_stats_value=( 2048 450 )
+declare -a test_case_6_stats_name=( "LRU Buffer Capacity" )
+declare -a test_case_6_stats_value=( 2048 )
 declare -a test_case_7_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_7_stats_value=( 1 40960 4096 36864 40959 40960 )
 

@@ -745,7 +745,10 @@ int evict_to_externram_multi(int size)
       cnt++;
     }
     else if (ret == 1) {
-      log_info("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
+#ifdef MONITORSTATS
+      StatsIncrWriteSkippedInvalid_notlocked();
+#endif
+      log_debug("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
     }
     else {
       log_err("%s: eviction of page %p failed.", __func__, (void*)(uintptr_t)key);
