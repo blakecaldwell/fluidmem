@@ -19,6 +19,9 @@
 #include <cstdint>  // for uint types
 #include <sys/user.h> /* for PAGE_SIZE */
 #include <string>
+#ifdef TIMING
+#include <timingstats.h>
+#endif
 
 std::string locator;
 memcached_pool_st * pool;
@@ -129,6 +132,7 @@ externRAMClientImpl::~externRAMClientImpl()
 int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
   // only a single write is supported
   log_trace_in("%s", __func__);
+  declare_timers();
 
   int retry = 1;
   int ret = 0;
@@ -146,6 +150,7 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
   /* write to memcached */
   char hashcodeStr[20] = "";
   sprintf( hashcodeStr, "%lx", hashcode );
+  start_timing_bucket(start, KVWRITE);
   while (retry--) {
     memcached_return_t rc = memcached_set(client, hashcodeStr, strlen(hashcodeStr), (char*) data, size, 0, 0);
     ret = rc;
@@ -168,6 +173,7 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
         break;
     }
   }
+  stop_timing(start, end, KVWRITE);
 #ifdef MEMCACHED_DEBUG
   e = Cycles::rdtsc();
   LOG(NOTICE, "writing %d bytes took %lu microseconds", size, (e - b)/2400);
@@ -195,8 +201,10 @@ int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
   uint32_t flags = 0;
   memcached_return_t error;
   char hashcodeStr[20] = "";
+  declare_timers();
 
   sprintf( hashcodeStr, "%lx", hashcode );
+  start_timing_bucket(start, KVREAD);
   buf = memcached_get( myClient, hashcodeStr, strlen(hashcodeStr), &length, &flags, &error );
   switch (error) {
     case MEMCACHED_SUCCESS:
@@ -212,6 +220,7 @@ int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
     default:
       break;
   }
+  stop_timing(start, end, KVREAD);
   log_trace_out("%s", __func__);
   return (int) length;
 }
@@ -301,16 +310,21 @@ int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
   uint32_t flags = 0;
   memcached_return_t error;
   char hashcodeStr[20] = "";
+  declare_timers();
 
   sprintf( hashcodeStr, "%lx", hashcode );
+  start_timing_bucket(start, KVREAD);
   buf = memcached_get( myClient, hashcodeStr, strlen(hashcodeStr), &length, &flags, &error );
+  stop_timing(start, end, KVREAD);
   switch (error) {
     case MEMCACHED_SUCCESS:
       /* don't risk overflowing recvBuf */
       if (length > PAGE_SIZE)
-      length = PAGE_SIZE;
+        length = PAGE_SIZE;
+      start_timing_bucket(start, KVCOPY);
       memcpy(recvBuf, buf, length);
       free(buf);
+      stop_timing(start, end, KVCOPY);
       break;
     case MEMCACHED_NOTFOUND:
       log_err("externRAMClientImpl::memcached error, code: %u, string: %s", error, memcached_strerror(myClient, error));

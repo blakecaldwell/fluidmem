@@ -22,6 +22,9 @@
 #include <string>
 #include <memory>
 #include <sys/user.h> /* for PAGE_SIZE */
+#ifdef TIMING
+#include <timingstats.h>
+#endif
 
 #include <boost/shared_ptr.hpp>
 
@@ -106,12 +109,18 @@ externRAMClientImpl::~externRAMClientImpl()
  */
 int externRAMClientImpl::write(uint64_t key, void *value, int size) {
   log_trace_in("%s", __func__);
+  declare_timers();
+
   log_debug("%s: got key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, size));
+  start_timing_bucket(start, KVCOPY);
   uint8_t * value_toStore = (uint8_t *) malloc(PAGE_SIZE);
   memcpy(value_toStore, value, PAGE_SIZE);
+  stop_timing(start, end, KVCOPY);
+  start_timing_bucket(start, KVWRITE);
   pthread_mutex_lock(&noop_mutex);
   kv[key] = value_toStore;
   pthread_mutex_unlock(&noop_mutex);
+  stop_timing(start, end, KVWRITE);
 
   log_trace_out("%s", __func__);
   return 0;
@@ -129,6 +138,7 @@ int externRAMClientImpl::write(uint64_t key, void *value, int size) {
  */
 int externRAMClientImpl::read(uint64_t key, void * value) {
   log_trace_in("%s", __func__);
+  declare_timers();
 
   page_data page_value;
 
@@ -136,10 +146,12 @@ int externRAMClientImpl::read(uint64_t key, void * value) {
   log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
   log_lock("%s: locked noop_mutex", __func__);
+  start_timing_bucket(start, KVREAD);
   try {
     page_value = kv.at(key);
   }
   catch (const out_of_range& oor) {
+    discard_timing();
     log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
     log_lock("%s: unlocked noop_mutex", __func__);
@@ -147,8 +159,12 @@ int externRAMClientImpl::read(uint64_t key, void * value) {
     log_trace_out("%s", __func__);
     return 0;
   }
+  stop_timing(start, end, KVREAD);
 
+  pthread_mutex_unlock(&noop_mutex);
+  start_timing_bucket(start, KVCOPY);
   memcpy(value, page_value, PAGE_SIZE);
+  stop_timing(start, end, KVCOPY);
 
   log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
@@ -166,6 +182,7 @@ void externRAMClientImpl::read_top(uint64_t key, void * value) {
 
 int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
   log_trace_in("%s", __func__);
+  declare_timers();
 
   page_data page_value;
 
@@ -174,10 +191,12 @@ int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
   log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
   log_lock("%s: locked noop_mutex", __func__);
+  start_timing_bucket(start, KVREAD);
   try {
     page_value = kv.at(key);
   }
   catch (const out_of_range& oor) {
+    discard_timing();
     log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
     log_lock("%s: unlocked noop_mutex", __func__);
@@ -185,8 +204,11 @@ int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
     log_trace_out("%s", __func__);
     return 0;
   }
+  stop_timing(start, end, KVREAD);
 
+  start_timing_bucket(start, KVCOPY);
   memcpy(value, page_value, PAGE_SIZE);
+  stop_timing(start, end, KVCOPY);
   log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
   log_lock("%s: unlocked noop_mutex", __func__);

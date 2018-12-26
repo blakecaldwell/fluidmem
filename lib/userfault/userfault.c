@@ -637,9 +637,7 @@ int ack_userfault(int ufd, void *addr, size_t len)
   int rc = 0;
   declare_timers();
 
-  start_timing_bucket(start, UFFD_WAKE);
   rc = ioctl(ufd, UFFDIO_WAKE, &range_struct);
-  stop_timing(start, end, UFFD_WAKE);
 
   if (rc) {
       if (errno == ENOENT) {

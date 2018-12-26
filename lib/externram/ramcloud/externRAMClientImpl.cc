@@ -25,6 +25,9 @@
 #include <MultiRead.h>
 #include <ClientException.h>
 #include <Dispatch.h>
+#ifdef TIMING
+#include <timingstats.h>
+#endif
 
 using namespace RAMCloud;
 string locator;
@@ -165,6 +168,7 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
   RAMCloud::RamCloud * client = myClient;
   uint64_t tid = tableId;
   int ret = 0;
+  declare_timers();
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   client = myClient_write;
   tid = tableId_write;
@@ -173,7 +177,9 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
   try {
     /* write to RAMCloud */
     void * hashcode_ptr = &hashcode;
+    start_timing_bucket(start, KVWRITE);
     client->write(tid, hashcode_ptr, sizeof(uint64_t), data, size);
+    stop_timing(start, end, KVWRITE);
   }
   catch (RAMCloud::ClientException& e) {
     ret = e.status;
@@ -202,14 +208,19 @@ int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
   log_trace_in("%s", __func__);
   int length=0;
   Buffer RCBuf;
+  declare_timers();
 
   try {
+    start_timing_bucket(start, KVREAD);
     myClient->read(tableId, &hashcode, sizeof(uint64_t), &RCBuf);
+    stop_timing(start, end, KVREAD);
     length = RCBuf.size();
     /* don't risk overflowing recvBuf */
     if (length > PAGE_SIZE)
       length = PAGE_SIZE;
+    start_timing_bucket(start, KVCOPY);
     RCBuf.copy(0,length,recvBuf);
+    stop_timing(start, end, KVCOPY);
   } catch (RAMCloud::ClientException& e) {
     if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
       log_err("RAMCloud exception: %s", e.str().c_str());
@@ -370,18 +381,23 @@ void externRAMClientImpl::read_top(uint64_t hashcode, void * recvBuf) {
 int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
   log_trace_in("%s", __func__);
   int length=0;
+  declare_timers();
 
   try {
+    start_timing_bucket(start, KVREAD);
     while (!read_for_asynread->isReady()) {
       context.dispatch->poll();
     }
     read_for_asynread->wait();
+    stop_timing(start, end, KVREAD);
 
+    start_timing_bucket(start, KVCOPY);
     length = buf_for_asynread.size();
     /* don't risk overflowing recvBuf */
     if (length > PAGE_SIZE)
       length = PAGE_SIZE;
     buf_for_asynread.copy(0,length,recvBuf);
+    stop_timing(start, end, KVCOPY);
   } catch (RAMCloud::ClientException& e) {
     if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
       log_err("RAMCloud exception: %s", e.str().c_str());
