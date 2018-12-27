@@ -21,10 +21,9 @@ FluidMem integrates with the Linux virtualization stack already used in cloud da
 
 ## Citations
 
-For any derivative works of FluidMem, including publications, please include a reference to the [FluidMem paper on arXiv](https://arxiv.org/abs/1707.07780):
-Caldwell, Blake, Youngbin Im, Sangtae Ha, Richard Han, and Eric Keller. "FluidMem:
-
-Memory as a Service for the Datacenter." arXiv preprint arXiv:1707.07780 (2017).
+If you find FluidMem useful for any academic research, please include a reference to the [FluidMem paper on arXiv](https://arxiv.org/abs/1707.07780):
+> Caldwell, Blake, Youngbin Im, Sangtae Ha, Richard Han, and Eric Keller. "FluidMem:
+> Memory as a Service for the Datacenter." arXiv preprint arXiv:1707.07780 (2017).
 
 ## Prerequisites
 * Linux kernel > 4.3 with remap patches ([custom kernel](https://github.com/blakecaldwell/userfault-kernel/tree/userfault_4.20-rc7))
@@ -43,7 +42,6 @@ For integration into a cloud envionment, [libvirt](patches/libvirt) and [OpenSta
 * memcached backend requirements: `libmemcached-devel, libmemcached`
 
 ```
-#!bash
 git clone https://github.com/blakecaldwell/fluidmem.git
 cd fluidmem
 ./autogen.sh
@@ -62,7 +60,6 @@ Note that this compiles the FluidMem monitor without prefetch or asynchronous pa
 
 ### Start FluidMem monitor on hypervisor
 ```
-#!bash
 # For memcached
 LOCATOR="--SERVER=127.0.0.1"
 # For RAMCloud
@@ -78,7 +75,6 @@ Note that if prefetch is enabled then monitor should be started with `--enable_p
 
 Log messages will be sent to stderr. The status of monitor can be observed by running the ui to retrieve stats:
 ```
-#!bash
 ui 127.0.0.1 s
 ```
 
@@ -96,7 +92,6 @@ Create an XML file describing the hotplug device /tmp/hotplug.xml:
 
 Attach the hotplug memory device
 ```
-#!bash
 virsh attach-device [instance ID] /tmp/hotplug.xml
 ```
 
@@ -104,12 +99,10 @@ virsh attach-device [instance ID] /tmp/hotplug.xml
 1. Find out the UUID of the VM (i.e. nova show [name]).
 2. Run the script from the scaleos repository on the hypervisor
 ```
-#!bash
 fluidmem/scripts/attachMemory.py [UUID <memory to add in KB> <NUMA node within VM to hotplug>
 ```
 For example:
 ```
-#!bash
 fluidmem/scripts/attachMemory.py b95dacf8-b84c-41b2-bf2e-ed2ec4ac8ce6 4194304 1
 ```
 
@@ -118,7 +111,6 @@ Note: Don't restart FluidMem monitor after hotplugging memory.
 #### Qemu
 Install rlwrap and socat:
 ```
-#!bash
 yum install -y wget
 wget https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
 rpm -ivh epel-release-latest-7.noarch.rpm
@@ -127,7 +119,6 @@ yum install rlwrap socat
 
 Connect to Qemu monitor and send hotplug commands:
 ```
-#!bash
 rlwrap -H ~/.qmp_history socat UNIX-CONNECT:/var/lib/libvirt/qemu/domain-instance-000003a1/monitor.sock STDIO
 rlwrap: warning: environment variable TERM not set, assuming vt100
 
@@ -145,7 +136,6 @@ warnings can be silenced by the --no-warnings (-n) option
 ### Online memory inside VM (not necessary for all distributions)
 Run fluidmem/scripts/online-mem.sh in VM
 ```
-#!bash
 $ sudo ~/fluidmem/scripts/online_mem.sh 
 onlined memory63 as zone movable
 onlined memory62 as zone movable
