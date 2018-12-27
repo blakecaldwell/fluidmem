@@ -1,24 +1,33 @@
-# FluidMem: an open ecosystem for memory disaggregation
+# FluidMem: open memory disaggregation
 ----
 
 FluidMem is an open source platform for decoupling memory from individual servers. It is designed for virtualized cloud platforms
-with a high-speed network betweeen hypervisors and a key-value store. A virtual machine's memory can then be offloaded or pulled in
-from a key-value store such as RAMCloud.
+with a high-speed network betweeen hypervisors and a key-value store. A virtual machine's memory can then be offloaded to or pulled in
+from a key-value store over the network.
 
-It is built on the following technologies
-  1. Userfaultfd with kernel extension for remapping memory pages
-  2. KVM hypervisor with memory hotplug
-  3. Key-value stores such as [RAMCloud](https://ramcloud.atlassian.net/wiki/spaces/RAM/overview) and [memcached](http://www.memcached.org/)
-  
-We integrate with the [OpenStack](https://www.openstack.org/) cloud platform to provide transparent memory expansion to cloud VMs.
+It is built on thse open source components of the Linux kernel:
+  1. Userfaultfd
+  2. KVM
+
+FluidMem gains flexibility by integrating with other open source projects:
+  * Key-value stores such as [RAMCloud](https://ramcloud.atlassian.net/wiki/spaces/RAM/overview) and [memcached](http://www.memcached.org/)
+  * Qemu with memory hotplug for on-demand remote memory
+  * [OpenStack](https://www.openstack.org/) cloud platform to provide transparent memory expansion to cloud VMs.
 
 Memory disaggregation promises to address the problem of limited memory capacity of datacenter servers, making extra memory a
 dynamic entity and presenting it transparently. FluidMem goes beyond existing research in memory disaggregation by implementing
 flexible (via user space page fault handling) and comprehensive memory disaggregation (including downsizing memory footprint).
 FluidMem integrates with the Linux virtualization stack already used in cloud datacenters.
 
+## Citations
+
+For any derivative works of FluidMem, including publications, please include a reference to the [FluidMem paper on arXiv](https://arxiv.org/abs/1707.07780):
+Caldwell, Blake, Youngbin Im, Sangtae Ha, Richard Han, and Eric Keller. "FluidMem:
+
+Memory as a Service for the Datacenter." arXiv preprint arXiv:1707.07780 (2017).
+
 ## Prerequisites
-* Linux kernel > 4.3 with remap patches ([custom kernel](https://github.com/blakecaldwell/userfault-kernel/tree/userfault_4.15))
+* Linux kernel > 4.3 with remap patches ([custom kernel](https://github.com/blakecaldwell/userfault-kernel/tree/userfault_4.20-rc7))
 * Qemu with userfaultfd memory backend ([patching Qemu instructions](patches/qemu))
 * A key-value store accessible from the hypervisor ([RAMCloud](https://ramcloud.atlassian.net/wiki/spaces/RAM/overview?mode=global) and [memcached](https://github.com/memcached/memcached/wiki/Install) currently supported)
 * [Zookeeper](https://zookeeper.apache.org/) for maintaining cluster state
