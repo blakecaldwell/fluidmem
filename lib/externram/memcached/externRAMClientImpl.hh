@@ -5,16 +5,16 @@
  * Written by Blake Caldwell <blake.caldwell@colorado.edu>, May 2015
  */
 
-/* 
+/*
  * externRAMClientImpl.hh
  *
  * This defines the implementation class of the interface externRAMClient
- * that deals specifically with memcached 
+ * that deals specifically with memcached
 */
 
 
-#ifndef _EXTERNRAMCLIENTIMPL_H_ 
-#define _EXTERNRAMCLIENTIMPL_H_ 
+#ifndef _EXTERNRAMCLIENTIMPL_H_
+#define _EXTERNRAMCLIENTIMPL_H_
 #include <externRAMClient.hh>
 #include <boost/shared_ptr.hpp>
 #include <libmemcached/memcached.hpp>
@@ -23,6 +23,7 @@
 
 using namespace memcache;
 #define LOOKAHEAD_SIZE 4
+#define KEYSTR_LEN 12
 
 // we use this to replace some detructors.
 struct null_deleter
@@ -44,22 +45,23 @@ private:
 #ifdef THREADED_PREFETCH
     memcached_st * myClient_multiread;
 #endif
+    void buildHashStrings(uint64_t * hashcodes, int num_prefetch);
+    char ** hashcodeStrings;
+    size_t *key_lengths;
 
 public:
     virtual ~externRAMClientImpl();
     externRAMClientImpl();
 
-    virtual int         write(uint64_t hashcode, void *data, int size);
-    virtual int         read(uint64_t hashcode, void * recvBuf);
+    virtual void*       write(uint64_t hashcode, void **data, int size, int *err);
+    virtual int         read(uint64_t hashcode, void ** recvBuf);
     virtual int         multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
     virtual void        multiReadTest();
-    virtual int         multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths);
-#ifdef ASYNREAD
-    virtual void        read_top(uint64_t key, void * value);   
-    virtual int         read_bottom(uint64_t key, void * value);
-    virtual void        multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);   
+    virtual bool        multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int *err);
+    virtual void        read_top(uint64_t key, void ** value);
+    virtual int         read_bottom(uint64_t key, void ** value);
+    virtual void        multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
     virtual int         multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
-#endif
     virtual int         remove(uint64_t hashcode);
 };
 #endif

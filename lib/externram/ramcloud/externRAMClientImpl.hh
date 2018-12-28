@@ -16,6 +16,7 @@
 #ifndef _EXTERNRAMCLIENTIMPL_H_
 #define _EXTERNRAMCLIENTIMPL_H_
 #include <externRAMClient.hh>
+#include <userfault.h>
 #include <boost/shared_ptr.hpp>
 /*
  * RamCloud.h has to be included after boost includes to avoid the following error:
@@ -25,10 +26,10 @@
 #include <MultiRead.h>
 #include <Context.h>
 #include <PerfStats.h>
+#include <Buffer.h>
 
 #define LOOKAHEAD_SIZE 4
 #define MAX_NUMBER_OF_RAMCLOUD_SERVERS 20
-#define MAX_NUM_PREFETCH 50
 // we use this to replace some detructors.
 struct null_deleter
 {
@@ -48,6 +49,8 @@ private:
 #if defined(THREADED_PREFETCH) || defined(ASYNREAD)
     RAMCloud::RamCloud * myClient_multiread;
 #endif
+
+    RAMCloud::Buffer RCBuf;
 
     // unique id for node
     char clientId[100];
@@ -74,21 +77,21 @@ public:
 #ifdef ASYNREAD
    RAMCloud::Buffer buf_for_asynread;
    RAMCloud::ReadRpc* read_for_asynread;
-   RAMCloud::MultiReadObject * requests_ptr_for_asynmread[MAX_NUM_PREFETCH];
-   RAMCloud::MultiReadObject requests_for_asynmread[MAX_NUM_PREFETCH];
-   RAMCloud::Tub<RAMCloud::ObjectBuffer> buf_for_asynmread[MAX_NUM_PREFETCH];
+   RAMCloud::MultiReadObject * requests_ptr_for_asynmread[MAX_MULTI_READ];
+   RAMCloud::MultiReadObject requests_for_asynmread[MAX_MULTI_READ];
+   RAMCloud::Tub<RAMCloud::ObjectBuffer> buf_for_asynmread[MAX_MULTI_READ];
    RAMCloud::MultiRead* read_for_asynmread;
 #endif
     virtual ~externRAMClientImpl();
     externRAMClientImpl();
 
-    virtual int         write(uint64_t hashcode, void *data, int size);
-    virtual int         read(uint64_t hashcode, void * recvBuf);
+    virtual void *      write(uint64_t hashcode, void **data, int size, int *err);
+    virtual int         read(uint64_t hashcode, void ** recvBuf);
     int                 multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
-    int                 multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths );
+    bool                multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int *err);
 #ifdef ASYNREAD
-    virtual void        read_top(uint64_t hashcode, void * recvBuf);
-    virtual int         read_bottom(uint64_t hashcode, void * recvBuf);
+    virtual void        read_top(uint64_t hashcode, void ** recvBuf);
+    virtual int         read_bottom(uint64_t hashcode, void ** recvBuf);
     void                multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
     int                 multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
 #endif

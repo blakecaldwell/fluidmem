@@ -22,6 +22,7 @@
 #ifdef TIMING
 #include <timingstats.h>
 #endif
+#include <userfault.h>
 
 std::string locator;
 memcached_pool_st * pool;
@@ -45,7 +46,7 @@ externRAMClient * externRAMClient::create(int type, char * config, uint64_t upid
   snprintf(upidStr, sizeof(upidStr), "%llu", upid);
   snprintf(locatorStr, sizeof(locatorStr), "%s --HASH-WITH-NAMESPACE --NAMESPACE=\"%s\"", config, upidStr);
   locator = locatorStr;
-  log_trace("locator : [%s] len: %d", locator.c_str(), locator.length());
+  log_debug("%s: locator : [%s] len: %d", __func__, locator.c_str(), locator.length());
   boost::shared_ptr<externRAMClient> impl(new externRAMClientImpl(),null_deleter());
   log_trace_out("%s", __func__);
   return (impl.get());
@@ -60,12 +61,21 @@ externRAMClient * externRAMClient::create(int type, char * config, uint64_t upid
 externRAMClientImpl::externRAMClientImpl()
 {
   log_trace_in("%s", __func__);
+
+  hashcodeStrings = (char**) malloc( MAX_MULTI_READ * sizeof(char*) );
+  key_lengths = (size_t*) malloc( MAX_MULTI_READ  * sizeof(size_t) );
+  for( int j=0; j<MAX_MULTI_READ; j++ )
+  {
+    key_lengths[j] = KEYSTR_LEN;
+    hashcodeStrings[j] = (char*) malloc( KEYSTR_LEN+1 );
+  }
+
   memcached_return_t rc;
   pool = memcached_pool(locator.c_str(), locator.length());
   memcached_st *memc = memcached_pool_pop(pool, false, &rc);
   if (rc != MEMCACHED_SUCCESS)
   {
-    log_err("memcached error, code: %ud, string: %s", rc, memcached_strerror(memc, rc));
+    log_err("%s: memcached error, code: %ud, string: %s", __func__, rc, memcached_strerror(memc, rc));
   }
   myClient = memc;
 #ifdef THREADED_WRITE_TO_EXTERNRAM
@@ -73,7 +83,7 @@ externRAMClientImpl::externRAMClientImpl()
   memcached_st *memc_write = memcached_pool_pop(pool_write, false, &rc);
   if (rc != MEMCACHED_SUCCESS)
   {
-    log_err("memcached error, code: %ud, string: %s", rc, memcached_strerror(memc_write, rc));
+    log_err("%s: memcached error, code: %ud, string: %s", __func__, rc, memcached_strerror(memc_write, rc));
   }
   myClient_write = memc_write;
 #endif
@@ -82,7 +92,7 @@ externRAMClientImpl::externRAMClientImpl()
   memcached_st *memc_multiread = memcached_pool_pop(pool_multiread, false, &rc);
   if (rc != MEMCACHED_SUCCESS)
   {
-    log_err("memcached error, code: %ud, string: %s", rc, memcached_strerror(memc_multiread, rc));
+    log_err("%s: memcached error, code: %ud, string: %s", __func__, rc, memcached_strerror(memc_multiread, rc));
   }
   myClient_multiread = memc_multiread;
 #endif
@@ -116,6 +126,13 @@ externRAMClientImpl::~externRAMClientImpl()
   memcached_pool_destroy(pool_multiread);
 #endif
   log_trace_out("%s", __func__);
+
+  for( int j=0; j<MAX_MULTI_READ; j++ )
+  {
+    free(hashcodeStrings[j]);
+  }
+  free(hashcodeStrings);
+  free(key_lengths);
 }
 
 /*
@@ -126,58 +143,56 @@ externRAMClientImpl::~externRAMClientImpl()
  @ hashcode: unique key
  @ data: buffer pointing to data to be stored in memcached
  @ size: length in bytes of the data to be stored
- -> returns: error code 
+ -> returns: pointer of buffer to free
  **********************************************
  */
-int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
+void* externRAMClientImpl::write(uint64_t hashcode, void **data, int size, int *err) {
   // only a single write is supported
   log_trace_in("%s", __func__);
   declare_timers();
 
   int retry = 1;
-  int ret = 0;
   memcached_st * client = myClient;
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   client = myClient_write;
 #endif
 
-#ifdef MEMCACHED_DEBUG
-  /* start timer */
-  uint64_t b, e;
-  b = Cycles::rdtsc();
-#endif
+  void * ret = NULL;
+  *err = 0;
 
   /* write to memcached */
-  char hashcodeStr[20] = "";
+  char hashcodeStr[KEYSTR_LEN+1] = "";
   sprintf( hashcodeStr, "%lx", hashcode );
+
   start_timing_bucket(start, KVWRITE);
   while (retry--) {
-    memcached_return_t rc = memcached_set(client, hashcodeStr, strlen(hashcodeStr), (char*) data, size, 0, 0);
-    ret = rc;
+    memcached_return_t rc = memcached_set(client, hashcodeStr, strlen(hashcodeStr), (char*) *data, size, 0, 0);
+    *err = -1;
     switch (rc) {
       case MEMCACHED_SERVER_MEMORY_ALLOCATION_FAILURE:
-        log_warn("externRAMClientImpl::write() WARN: memcached cannot allocate more memory");
+        log_warn("%s: memcached cannot allocate more memory", __func__);
+        ret = NULL;
         retry++;
         sleep(0.1);
         break;
       case MEMCACHED_SERVER_TEMPORARILY_DISABLED:
         /* allow server restart during testing */
-        log_warn("externRAMClientImpl::write() ERR: data may be lost. memcached server has failed");
+        log_warn("%s: externRAMClientImpl::write() ERR: data may be lost. memcached server has failed", __func__);
+        ret = NULL;
         retry++;
         sleep(1);
         break;
       case MEMCACHED_SUCCESS:
+        *err = 0;
+        ret = *data;
         break;
       default:
-        log_err("externRAMClientImpl::write() memcached error, code: %ud, string: %s", rc, memcached_strerror(client, rc));
+        log_err("%s: externRAMClientImpl::write() memcached error, code: %ud, string: %s", __func__, rc, memcached_strerror(client, rc));
+        ret = NULL;
         break;
     }
   }
   stop_timing(start, end, KVWRITE);
-#ifdef MEMCACHED_DEBUG
-  e = Cycles::rdtsc();
-  LOG(NOTICE, "writing %d bytes took %lu microseconds", size, (e - b)/2400);
-#endif
 
   log_trace_out("%s", __func__);
   return ret;
@@ -194,35 +209,48 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
  -> returns: length of recvBuf
  **********************************************
  */
-int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
+int externRAMClientImpl::read(uint64_t hashcode, void ** recvBuf) {
   log_trace_in("%s", __func__);
   size_t length = 0;
-  char * buf = NULL;
   uint32_t flags = 0;
   memcached_return_t error;
+  char * buf = NULL;
   char hashcodeStr[20] = "";
   declare_timers();
 
   sprintf( hashcodeStr, "%lx", hashcode );
   start_timing_bucket(start, KVREAD);
   buf = memcached_get( myClient, hashcodeStr, strlen(hashcodeStr), &length, &flags, &error );
+  stop_timing(start, end, KVREAD);
+
   switch (error) {
     case MEMCACHED_SUCCESS:
-      /* don't risk overflowing recvBuf */
-      if (length > PAGE_SIZE)
-      length = PAGE_SIZE;
-      memcpy(recvBuf, buf, length);
-      free(buf);
+      start_timing_bucket(start, KVCOPY);
+      memcpy(*recvBuf, buf, length);
+      stop_timing(start, end, KVCOPY);
       break;
     case MEMCACHED_NOTFOUND:
-      log_err("externRAMClientImpl::memcached error, code: %u, string: %s", error, memcached_strerror(myClient, error));
+      log_debug("%s: memcached returned not found, code: %u, string: %s", __func__, error, memcached_strerror(myClient, error));
       break;
     default:
       break;
   }
-  stop_timing(start, end, KVREAD);
+
+  if (buf != NULL)
+    free(buf);
   log_trace_out("%s", __func__);
   return (int) length;
+}
+
+void externRAMClientImpl::buildHashStrings(uint64_t * hashcodes, int num_prefetch) {
+  log_trace_in("%s", __func__);
+
+  for( int j=0; j<num_prefetch; j++ )
+  {
+    sprintf( hashcodeStrings[j], "%lx", hashcodes[j] );
+  }
+  log_trace_out("%s", __func__);
+  return;
 }
 
 /*
@@ -240,104 +268,52 @@ int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
  */
 int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
   log_trace_in("%s", __func__);
-  size_t key_length[num_prefetch];
-  memcached_return_t error;
-  memcached_return_t rc;
-  uint32_t flags;
-  char return_key[MEMCACHED_MAX_KEY];
-  size_t return_key_length;
-  char *return_value;
-  size_t return_value_length;
-  unsigned int i = 0;
-  char hashcodeStr[num_prefetch][20];
-  char * hashcodeStr2[num_prefetch];
-  memcached_st * client = myClient;
-#ifdef THREADED_PREFETCH
-  client = myClient_multiread;
-#endif
 
-  memset( &hashcodeStr, 0, sizeof(hashcodeStr) );
-  for( int j=0; j<num_prefetch; j++ )
+  // TODO: memcached does not support zerocopy because it allocates its own buffer
+  //       in mget and we can't get that buffer from libexternram to libuserfault
+  for( int i=0; i<num_prefetch; i++ )
   {
-    sprintf( hashcodeStr[j], "%lx", hashcodes[j] );
-    key_length[j] = strlen(hashcodeStr[j]);
-    hashcodeStr2[j] = (char*) malloc( key_length[j]+1 );
-    sprintf( hashcodeStr2[j], "%lx", hashcodes[j] );
-  }
-  error = memcached_mget( client, hashcodeStr2, key_length, num_prefetch );
-
-  if (error == MEMCACHED_SUCCESS)
-  {
-    while ((return_value = memcached_fetch( client, return_key, &return_key_length,
-                                      &return_value_length, &flags, &rc)))
-    {
-      if( rc == MEMCACHED_SUCCESS && return_value != NULL )
-      {
-        if( memcmp(return_key,hashcodeStr2[i],return_key_length)!=0 )
-        {
-          log_err("memcached could not retrieve the value for key %lx", hashcodes[i]);
-        }
-        recvBufs[i] = return_value;
-        lengths[i] = return_value_length;
-      }
-      i++;
-    }
-  }
-  else
-  {
-    log_err("externRAMClientImpl::memcached error, code: %ud, string: %s", error, memcached_strerror(client, error));
-  }
-  for( int j=0; j<num_prefetch; j++ )
-  {
-    free( hashcodeStr2[j] );
+    recvBufs[i] = malloc(PAGE_SIZE);
   }
 
+  multiRead_top(hashcodes, num_prefetch, recvBufs, lengths);
+  multiRead_bottom(hashcodes, num_prefetch, recvBufs, lengths);
   log_trace_out("%s", __func__);
   return 0;
 }
 
 #ifdef ASYNREAD
-void externRAMClientImpl::read_top(uint64_t key, void * value) {
+void externRAMClientImpl::read_top(uint64_t key, void ** value) {
   log_trace_in("%s", __func__);
+  multiRead_top(&key, 1, (void**) NULL, NULL);
   log_trace_out("%s", __func__);
   return;
 }
 
-int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
+int externRAMClientImpl::read_bottom(uint64_t hashcode, void ** recvBuf) {
   log_trace_in("%s", __func__);
-  size_t length = 0;
-  char * buf = NULL;
-  uint32_t flags = 0;
-  memcached_return_t error;
-  char hashcodeStr[20] = "";
-  declare_timers();
-
-  sprintf( hashcodeStr, "%lx", hashcode );
-  start_timing_bucket(start, KVREAD);
-  buf = memcached_get( myClient, hashcodeStr, strlen(hashcodeStr), &length, &flags, &error );
-  stop_timing(start, end, KVREAD);
-  switch (error) {
-    case MEMCACHED_SUCCESS:
-      /* don't risk overflowing recvBuf */
-      if (length > PAGE_SIZE)
-        length = PAGE_SIZE;
-      start_timing_bucket(start, KVCOPY);
-      memcpy(recvBuf, buf, length);
-      free(buf);
-      stop_timing(start, end, KVCOPY);
-      break;
-    case MEMCACHED_NOTFOUND:
-      log_err("externRAMClientImpl::memcached error, code: %u, string: %s", error, memcached_strerror(myClient, error));
-      break;
-    default:
-      break;
-  }
+  int length;
+  multiRead_bottom(&hashcode, 1, recvBuf, &length);
   log_trace_out("%s", __func__);
-  return (int) length;
+  return length;
 }
 
 void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
   log_trace_in("%s", __func__);
+  memcached_return_t error;
+  uint32_t flags;
+  memcached_st * client = myClient;
+#ifdef THREADED_PREFETCH
+  client = myClient_multiread;
+#endif
+
+  buildHashStrings( hashcodes, num_prefetch );
+  error = memcached_mget( client, hashcodeStrings, key_lengths, num_prefetch );
+  if (error != MEMCACHED_SUCCESS)
+  {
+    log_err("%s: memcached error, code: %u, string: %s", __func__, error, memcached_strerror(client, error));
+  }
+
   log_trace_out("%s", __func__);
   return;
 }
@@ -352,48 +328,42 @@ int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch
   size_t return_key_length;
   char *return_value;
   size_t return_value_length;
-  unsigned int i = 0;
-  char hashcodeStr[num_prefetch][20];
-  char * hashcodeStr2[num_prefetch];
   memcached_st * client = myClient;
+  unsigned int i = 0;
 #ifdef THREADED_PREFETCH
   client = myClient_multiread;
 #endif
+  declare_timers();
 
-  memset( &hashcodeStr, 0, sizeof(hashcodeStr) );
-  for( int j=0; j<num_prefetch; j++ )
+  memset(lengths, 0, sizeof(int) * num_prefetch);
+  while ((return_value = memcached_fetch( client, return_key, &return_key_length,
+                                    &return_value_length, &flags, &rc)))
   {
-    sprintf( hashcodeStr[j], "%lx", hashcodes[j] );
-    key_length[j] = strlen(hashcodeStr[j]);
-    hashcodeStr2[j] = (char*) malloc( key_length[j]+1 );
-    sprintf( hashcodeStr2[j], "%lx", hashcodes[j] );
-  }
-  error = memcached_mget( client, hashcodeStr2, key_length, num_prefetch );
-
-  if (error == MEMCACHED_SUCCESS)
-  {
-    while ((return_value = memcached_fetch( client, return_key, &return_key_length,
-                                      &return_value_length, &flags, &rc)))
+    // return_value != NULL
+    if(( rc == MEMCACHED_SUCCESS ) && ( return_value != NULL ))
     {
-      if( rc == MEMCACHED_SUCCESS && return_value != NULL )
-      {
-        if( memcmp(return_key,hashcodeStr2[i],return_key_length)!=0 )
-        {
-          log_err("memcached could not retrieve the value for key %lx", hashcodes[i]);
-        }
-        recvBufs[i] = return_value;
-        lengths[i] = return_value_length;
+      if( i == num_prefetch ) {
+        log_err("%s: memcached returned too many keys", __func__);
+        break;
       }
-      i++;
+
+      if( memcmp(return_key,hashcodeStrings[i],return_key_length)!=0 )
+      {
+        log_err("memcached could not retrieve the value for key %lx, expected %s, but got %s", hashcodes[i], hashcodeStrings[i], return_key);
+      }
+      lengths[i] = return_value_length;
+      start_timing_bucket(start, KVCOPY);
+      memcpy(recvBufs[i], return_value, lengths[i]);
+      stop_timing(start, end, KVCOPY);
     }
-  }
-  else
-  {
-    log_err("externRAMClientImpl::memcached error, code: %ud, string: %s", error, memcached_strerror(client, error));
-  }
-  for( int j=0; j<num_prefetch; j++ )
-  {
-    free( hashcodeStr2[j] );
+    else if( rc != MEMCACHED_SUCCESS )
+    {
+      log_err("%s: memcached error, code: %u, string: %s", __func__, error, memcached_strerror(client, rc));
+    }
+    if ( return_value != NULL ) {
+      free( return_value );
+    }
+    i++;
   }
 
   log_trace_out("%s", __func__);
@@ -410,20 +380,28 @@ int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch
  @ num_write: number of keys to write
  @ data: pointer to an array of buffers to write
  @ lengths: pointer to an array of lengths to write
- -> returns: error code 
+ -> returns: should free be called
  **********************************************
  */
-int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths) {
+bool externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int *err) {
   log_trace_in("%s", __func__);
+  bool should_free = false;
+  void * ret_addr;
+  int read_err;
+  *err = 0;
+
   int ret = 0;
   for( int i=0; i<num_write; i++ )
   {
-    ret = write( hashcodes[i], data[i], lengths[i] );
-    if( ret>0 )
-      return ret;
+    ret_addr = write( hashcodes[i], &data[i], lengths[i], &read_err );
+    if( read_err < 0 )
+      *err = read_err;
+    if( ret_addr != NULL ) {
+      should_free = true;
+    }
   }
   log_trace_out("%s", __func__);
-  return ret;
+  return should_free;
 }
 
 /*
@@ -441,9 +419,10 @@ void externRAMClientImpl::multiReadTest()
   char values[3][50] = { "dddddddddddddddddddddd", "fffffffffffffffffff", "gggggggggggggggg" };
   char * buf[3];
   int length[3];
+  int err;
   for( int i=0; i<3; i++ )
   {
-    write( keys[i], values[i], strlen(values[i]) );
+    write( keys[i], (void **) &values[i], strlen(values[i]), &err );
   }
 
   multiRead( keys, 3, (void**) buf, length );
@@ -480,12 +459,6 @@ int externRAMClientImpl::remove(uint64_t hashcode) {
   int retry = 1;
   memcached_st * client = myClient;
 
-#ifdef MEMCACHED_DEBUG
-  /* start timer */
-  uint64_t b, e;
-  b = Cycles::rdtsc();
-#endif
-
   /* write to memcached */
   char hashcodeStr[20] = "";
   sprintf( hashcodeStr, "%lx", hashcode );
@@ -511,10 +484,6 @@ int externRAMClientImpl::remove(uint64_t hashcode) {
         break;
     }
   }
-#ifdef MEMCACHED_DEBUG
-  e = Cycles::rdtsc();
-  LOG(NOTICE, "removing took %lu microseconds", (e - b)/2400);
-#endif
 
   log_trace_out("%s", __func__);
 }

@@ -15,6 +15,7 @@
 #ifndef _PAGECACHEIMPL_H_
 #define _PAGECACHEIMPL_H_
 #include <PageCache.hh>
+#include <userfault.h>
 #include <boost/tuple/tuple.hpp>
 #include <boost/tuple/tuple_comparison.hpp>
 #include <boost/unordered_map.hpp>    // for hash of RPCData entries
@@ -157,8 +158,6 @@ struct null_deleter
 #define OWNERSHIP_PAGE_CACHE  2
 #define OWNERSHIP_EXTERNRAM   3
 
-#define MAX_PREFETCH 100
-
 class PageCacheImpl: public PageCache
 {
 private:
@@ -176,9 +175,9 @@ public:
 
     page_cache_lru_list pageCache;
 
-    uint64_t keys_for_mread[MAX_PREFETCH];
-    void * bufs_for_mread[MAX_PREFETCH];
-    int lengths_for_mread[MAX_PREFETCH];
+    uint64_t keys_for_mread[MAX_MULTI_READ];
+    void * bufs_for_mread[MAX_MULTI_READ];
+    int lengths_for_mread[MAX_MULTI_READ];
     int numPrefetch;
     uint64_t g_start;
     uint64_t g_end;

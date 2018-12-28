@@ -70,7 +70,6 @@ extern page_buffer_info* buf_evictpage;
 #endif
 
 #ifdef THREADED_WRITE_TO_EXTERNRAM
-#define MAX_MULTI_WRITE 1024
 void *write_into_externram_thread(void * tmp) {
   log_trace_in("%s", __func__);
   setThreadCPUAffinity(CPU_FOR_WRITE_THREAD, "write_thread", TID());
@@ -87,6 +86,7 @@ void *write_into_externram_thread(void * tmp) {
     int size = 0;
     int numWrite = 0;
     int ufd = 0;
+    bool free_values = false;
 
     log_lock("%s: locking list_lock", __func__);
     pthread_mutex_lock(&list_lock);
@@ -161,17 +161,28 @@ void *write_into_externram_thread(void * tmp) {
       struct externRAMClient *client = get_client_by_fd(ufd);
       if (client) {
         start_timing_bucket(start, WRITE_PAGES);
-        writePages(client, keys, numWrite, (void**) bufs, lengths);
+        free_values = writePages(client, keys, numWrite, (void**) bufs, lengths);
         stop_timing(start, end, WRITE_PAGES);
+
+#ifdef DEBUG
+        for( j=0 ; j<numWrite; j++ ) {
+          if (lengths[j] < 0)
+            log_debug("%s: failed to write %p", __func__, bufs[j]);
+        }
+#endif
       }
-      else
+      else {
         log_debug("%s: skipping writing %d pages belonging to invalid fd %d", __func__, numWrite, ufd);
+        free_values = true;
+      }
 
       log_lock("%s: locking list_lock", __func__);
       pthread_mutex_lock(&list_lock);
       log_lock("%s: locked list_lock", __func__);
-      for( ; j<numWrite; j++ )
+      for( j=0 ; j<numWrite; j++ ) {
+        log_debug("%s: removing the key %p from the write list", __func__, keys[j]);
         del_write_info( ufd, keys[j] );
+      }
       waiting = isUfhandlerWaiting;
       log_lock("%s: unlocking list_lock", __func__);
       pthread_mutex_unlock(&list_lock);
@@ -188,14 +199,24 @@ void *write_into_externram_thread(void * tmp) {
         log_lock("%s: sem_posted flushed_write_sem", __func__);
       }
 
-      for( ; k<numWrite; k++ )
-      {
+      if (free_values) {
+        for( k=0 ; k<numWrite; k++ )
+        {
+          if (bufs[k] != NULL) {
+            // libexternram says it is done with the buffer
 #ifdef THREADED_REINIT
-        int ret = return_free_page(buf_evictpage, bufs[k]);
+            int ret = return_free_page(buf_evictpage, bufs[k]);
 #else
-        int ret = munmap(bufs[k], PAGE_SIZE);
+            int ret = munmap(bufs[k], PAGE_SIZE);
 #endif
-        log_debug("munmap to %p in %s (ret %d)", bufs[k], __func__, ret);
+            if (ret < 0) {
+              log_err("munmap to %p in %s (ret %d)", bufs[k], __func__, ret);
+            }
+            else {
+              log_debug("munmap to %p in %s (ret %d)", bufs[k], __func__, ret);
+            }
+          }
+        }
       }
 
       if( waiting )
@@ -216,7 +237,6 @@ void *write_into_externram_thread(void * tmp) {
 }
 #endif
 #ifdef THREADED_PREFETCH
-#define MAX_MULTI_READ 1024
 void *prefetch_thread(void * tmp) {
   log_trace_in("%s", __func__);
   setThreadCPUAffinity(CPU_FOR_PREFETCH_THREAD, "prefetch_thread", TID());
@@ -232,6 +252,7 @@ void *prefetch_thread(void * tmp) {
     int size = 0;
     int numPrefetch = 0;
     int ufd = 0;
+    int i = 0;
 
     log_lock("%s: locking list_lock", __func__);
     pthread_mutex_lock(&list_lock);
@@ -252,39 +273,55 @@ void *prefetch_thread(void * tmp) {
         {
           keys[numPrefetch] = *((uint64_t*)current->key.pageaddr);
           numPrefetch++;
-          log_debug("%s: prefetching the page %p will be started by prefetch_thread. prefetch_list_size : %d", __func__, *((uint64_t*)current->key.pageaddr), size );
+          log_debug("%s: prepared info to fetch page %p. prefetch_list_size : %d", __func__, *((uint64_t*)current->key.pageaddr), size );
         }
       }
       toPrefetch = true;
       isPrefetcherWaiting = false;
     }
-    else
+    else {
+      // nothing on prefetch_list
       isPrefetcherWaiting = true;
+    }
+
     log_lock("%s: unlocking list_lock", __func__);
     pthread_mutex_unlock(&list_lock);
     log_lock("%s: unlocked list_lock", __func__);
     if(toPrefetch)
     {
+      log_debug("%s: starting %d prefetches with key %lx", __func__, numPrefetch, keys[0]);
+
       bool waiting = false;
       int i=0;
       struct externRAMClient *client = get_client_by_fd(ufd);
       if (client) {
+
+#ifdef ASYNREAD
+        log_lock("%s: locking read_lock", __func__);
+        pthread_mutex_lock(&read_lock);
+        log_lock("%s: locked read_lock", __func__);
+#endif
+
         start_timing_bucket(start, READ_PAGES);
         readPages(client, keys, numPrefetch, (void**) bufs, lengths );
         stop_timing(start, end, READ_PAGES);
+
+#ifdef ASYNREAD
+        log_lock("%s: unlocking read_lock", __func__);
+        pthread_mutex_unlock(&read_lock);
+        log_lock("%s: unlocked read_lock", __func__);
+#endif
       }
       else {
         log_warn("%s: skipping prefetching for invalid fd %d", ufd);
         sem_wait(&prefetcher_sem);
         continue;
       }
-      if (bufs[0] == NULL) {
-        log_err("%s: prefetch failed starting at key %lx for %d values", __func__, keys[0], numPrefetch);
-        return;
-      }
 #ifdef DEBUG
       for( i=0; i<numPrefetch; i++ ) {
-        log_debug("%s: prefetch [%d] bufs %lx lenths %d", __func__, i, (uint64_t)bufs[i], lengths[i]);
+        if ((lengths[i] != PAGE_SIZE) || (bufs[i] == NULL)) {
+          log_err("%s: prefetch failed for key %lx with length %lx, index %u", __func__, keys[i], lengths[i], i);
+        }
       }
 #endif
       log_lock("%s: locking pagecache_lock", __func__);
@@ -415,8 +452,10 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
 
       delayed_evict=true;
     }
-    else
+    else {
       log_err("%s: eviction of page %p failed", __func__, (void*)(uintptr_t)key);
+      ret = ret2;
+    }
   }
 
 #endif
@@ -451,9 +490,8 @@ int place_data_page(int ufd, void * dst, void * src) {
     ret = copy_struct.copy;
       switch(copy_struct.copy) {
         case EBUSY:
-          log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
-          break;
         case ENOENT:
+        case ESRCH:
           log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
           break;
         default:
@@ -503,6 +541,12 @@ int place_zero_page(int ufd, void * dst) {
   if (rc) {
     ret = errno;
     switch(errno) {
+      case EBUSY:
+      case ENOENT:
+      case EINVAL:
+      case ESRCH:
+        log_warn("%s: dst: %p, ufd: %d", __func__, dst, ufd);
+        break;
       default:
         log_err("%s: dst: %p, ufd: %d", __func__, dst, ufd);
         break;
@@ -553,6 +597,8 @@ int move_page(int ufd, void * dst, void * src) {
         log_info("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
         break;
       case ENOENT:
+      case EINVAL:
+      case ESRCH:
         log_warn("%s: src: %p, dst: %p, ufd: %d", __func__, src, dst, ufd);
         break;
       default:
@@ -705,6 +751,23 @@ int create_buffers()
     ret = -1;
   }
 #endif
+
+#ifdef THREADED_PREFETCH
+#ifdef ASYNREAD
+  if (pthread_mutex_init(&read_lock, NULL) != 0)
+  {
+    log_err("%s: read lock init failed", __func__);
+    ret = -1;
+  }
+#endif
+#endif
+
+  read_tmp_page = get_local_tmp_page();
+  if (!read_tmp_page) {
+    log_err("failed to get evict tmp page");
+    ret = -1;
+  }
+
   log_trace_out("%s", __func__);
 
   return ret;
@@ -717,20 +780,20 @@ int evict_to_externram_multi(int size)
 
   uint64_t key;
   int cnt = 0; // number of actually evicted pages
-  struct c_cache_node ** node_list_ptr = malloc(sizeof(struct c_cache_node *));
+  struct c_cache_node * node_list;
 
-  int num_to_evict = popNLRU(lru, size, node_list_ptr);
+  int num_to_evict = popNLRU(lru, size, &node_list);
   if (size > num_to_evict) {
     log_warn("%s: the LRUBuffer has %d pages, less than the number of pages to be evicted (%d).",
             __func__, num_to_evict, size);
   }
 
-  int i = 0;
-  for(; i < size; i++)
+  int i;
+  for( i=0; i < size; i++)
   {
-    key = (*node_list_ptr)[i].hashcode & (uint64_t)(PAGE_MASK);
+    key = node_list[i].hashcode & (uint64_t)(PAGE_MASK);
 
-    int ret = evict_to_externram((*node_list_ptr)[i].ufd, (void*)(uintptr_t)key);
+    int ret = evict_to_externram(node_list[i].ufd, (void*)(uintptr_t)key);
     if (ret == 0) {
       log_debug("%s: eviction of page %p succeeded", __func__, (void*)(uintptr_t)key);
       cnt++;
@@ -746,9 +809,7 @@ int evict_to_externram_multi(int size)
     }
   }
 
-  if (*node_list_ptr)
-    free(*node_list_ptr);
-  free(node_list_ptr);
+  free(node_list);
   log_trace_out("%s", __func__);
   return cnt;
 }
@@ -810,10 +871,12 @@ int evict_to_externram(int ufd, void * pageaddr) {
 
   declare_timers();
   int ret = -1;
+  void *write_ret = NULL;
   int free_ret = -1;
   int retry = 5;
+  bool skip_clean = false;
   void *evict_tmp_page;
-  bool toClean = true;
+  void **evict_tmp_page_ptr;
 
   // this page contains data (non zero byte), evict it
   while (retry > 0) {
@@ -822,6 +885,7 @@ int evict_to_externram(int ufd, void * pageaddr) {
 #else
     evict_tmp_page = get_local_tmp_page();
 #endif
+    evict_tmp_page_ptr = &evict_tmp_page;
 
     if (!evict_tmp_page) {
       log_err("failed to get evict tmp page");
@@ -848,7 +912,7 @@ int evict_to_externram(int ufd, void * pageaddr) {
           retry--;
           break;
         case EEXIST:
-          log_recoverable_err("%s: retrying page, rc: %d, pageaddr: %p", __func__, ret, pageaddr);
+          log_warn("%s: retrying page, rc: %d, pageaddr: %p", __func__, ret, pageaddr);
           ret = -1;
           retry--;
           break;
@@ -908,13 +972,14 @@ int evict_to_externram(int ufd, void * pageaddr) {
       updatePageCacheAfterSkippedWrite(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr);
       stop_timing(start, end, UPDATE_PAGE_CACHE);
 #endif
-      toClean = false;
+      skip_clean = true;
       log_debug("%s: Skipping writing the page (%p fd %d) of all zeroes to externRAM.", __func__,
                 pageaddr, ufd);
     }
     else
     {
 #endif
+      skip_clean = true;
       // write page to externram
 #ifdef THREADED_WRITE_TO_EXTERNRAM
       log_lock("%s: locking list_lock", __func__);
@@ -935,14 +1000,19 @@ int evict_to_externram(int ufd, void * pageaddr) {
         sem_post(&writer_sem);
         log_lock("%s: sem_posted writer_sem", __func__);
       }
-      toClean = false;
 #else
       // not THREADED_WRITE_TO_EXTERNRAM
       struct externRAMClient *client = get_client_by_fd(ufd);
       if (client) {
         start_timing_bucket(start, WRITE_PAGE);
-        writePage(client, (uint64_t)(uintptr_t)pageaddr, evict_tmp_page);
+        write_ret = writePage(client, (uint64_t)(uintptr_t)pageaddr, evict_tmp_page_ptr);
         stop_timing(start, end, WRITE_PAGE);
+        if (write_ret != NULL) {
+          // externram wants us to free the buffer in write_ret, but
+          // leave evict_tmp_page alone
+          skip_clean = false;
+          evict_tmp_page = write_ret;
+        }
       }
       else
         log_err("%s: failed writing page %p for invalid fd %d", __func__, pageaddr, ufd);
@@ -953,7 +1023,6 @@ int evict_to_externram(int ufd, void * pageaddr) {
       updatePageCacheAfterWrite(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr);
       stop_timing(start, end, UPDATE_PAGE_CACHE);
 #endif
-      log_debug("%s: Writing the page %p fd %d to externRAM.", __func__, pageaddr, ufd);
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
     }
 #endif
@@ -972,8 +1041,7 @@ int evict_to_externram(int ufd, void * pageaddr) {
   }
 
   // cleanup
-  if(toClean)
-  {
+  if (!skip_clean) {
 #ifdef THREADED_REINIT
     free_ret = return_free_page(buf_evictpage, evict_tmp_page);
 #else
@@ -997,12 +1065,10 @@ int read_from_externram(int ufd, void * pageaddr) {
 
   // initialization & var init
   declare_timers();
-  void *read_tmp_page;
   bool sync = true;
   int length = -1;
   int ret = -1;
   int ret_munmap = -1;
-  bool toClean = true;
 #ifdef MONITORSTATS
   StatsIncrPageFault_notlocked();
 #endif
@@ -1087,16 +1153,27 @@ int read_from_externram(int ufd, void * pageaddr) {
   }
 #endif
 
+#ifdef THREADED_PREFETCH
+#ifdef ASYNREAD
+  // we don't need to wait for prefetch thread, so take the lock
+  log_lock("%s: locking read_lock", __func__);
+  pthread_mutex_lock(&read_lock);
+  log_lock("%s: locked read_lock", __func__);
+#endif
+#endif
+
+  void ** read_tmp_page_ptr = &read_tmp_page;
 #ifdef PAGECACHE
+
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
 
   start_timing_bucket(start, READ_VIA_PAGE_CACHE);
 #ifdef ASYNREAD
-  readPageIfInPageCache_top(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+  readPageIfInPageCache_top(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
 #else
-  length = readPageIfInPageCache(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+  length = readPageIfInPageCache(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
 #endif
   stop_timing(start, end, READ_VIA_PAGE_CACHE);
 
@@ -1106,24 +1183,13 @@ int read_from_externram(int ufd, void * pageaddr) {
 
 #else
   // without page cache we don't know whether page has been seen before or not.
-  // we will have to allocate a buffer for the read return value no matter what
   struct externRAMClient *client = get_client_by_fd(ufd);
   if (client) {
-#ifdef THREADED_REINIT
-    read_tmp_page = get_tmp_page(buf_readpage);
-#else
-    read_tmp_page = get_local_tmp_page();
-#endif
-    if (!read_tmp_page) {
-      log_err("failed to get read tmp page");
-      return -1;
-    }
-
     start_timing_bucket(start, READ_PAGE);
 #ifdef ASYNREAD
-    readPage_top(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
+    readPage_top(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page_ptr);
 #else
-    length = readPage(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
+    length = readPage(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page_ptr);
     stop_timing(start, end, READ_PAGE);
 #endif
   }
@@ -1139,8 +1205,7 @@ int read_from_externram(int ufd, void * pageaddr) {
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
-
-  length = readPageIfInPageCache_bottom(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)&read_tmp_page);
+  length = readPageIfInPageCache_bottom(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
   stop_timing(start, end, READ_VIA_PAGE_CACHE);
 
   log_lock("%s: unlocking pagecache_lock", __func__);
@@ -1150,7 +1215,7 @@ int read_from_externram(int ufd, void * pageaddr) {
 #else
   // already got client
   if (client) {
-    length = readPage_bottom(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page);
+    length = readPage_bottom(client, (uint64_t)(uintptr_t)pageaddr, read_tmp_page_ptr);
     stop_timing(start, end, READ_PAGE);
   }
   else
@@ -1166,9 +1231,6 @@ int read_from_externram(int ufd, void * pageaddr) {
     // ret = ufd if page eviction skipped
   } else if (length == 0){
     // place zero page
-#ifdef PAGECACHE
-    toClean = false;
-#endif
     ret = place_zero_page(ufd, (void *)(uintptr_t)pageaddr);
     if (ret < 0) {
       log_err("%s: place_zero_page", __func__);
@@ -1177,28 +1239,20 @@ int read_from_externram(int ufd, void * pageaddr) {
   } else {
     log_err("%s: we don't know how to handle a read of length %s", __func__, length);
   }
-#ifdef MONITORSTATS
-  StatsSetLastFaultTime();
-#endif
-
-  // cleanup
-  if(toClean) {
-#ifdef THREADED_REINIT
-    ret_munmap = return_free_page(buf_readpage, read_tmp_page);
-#else
-    ret_munmap = munmap(read_tmp_page, PAGE_SIZE);
-#endif
-    if (ret_munmap < 0) {
-      log_err("munmap to %p in %s (ret %d)", read_tmp_page, __func__, ret_munmap);
-    }
-    else {
-      log_debug("munmap to %p in %s (ret %d)", read_tmp_page, __func__, ret_munmap);
-    }
-  }
 
 #ifdef ASYNREAD
   // ret2 = ufd if page eviction skipped
   ret = ret2;
+
+  // we have returned page back to the faulting applications, so now we can
+  // resume asynchronous prefetch
+  log_lock("%s: unlocking read_lock", __func__);
+  pthread_mutex_unlock(&read_lock);
+  log_lock("%s: unlocked read_lock", __func__);
+#endif
+
+#ifdef MONITORSTATS
+  StatsSetLastFaultTime();
 #endif
 
   log_trace_out("%s", __func__);
@@ -1294,6 +1348,9 @@ void clean_up_lock() {
 #endif
 #ifdef THREADED_PREFETCH
   sem_destroy(&prefetcher_sem);
+#ifdef ASYNREAD
+  pthread_mutex_destroy(&read_lock);
+#endif
 #endif
 #if defined(THREADED_WRITE_TO_EXTERNRAM) || defined(THREADED_PREFETCH)
   pthread_mutex_destroy(&list_lock);
@@ -1302,6 +1359,9 @@ void clean_up_lock() {
 #ifdef THREADED_REINIT
   cleanup_page_buffer(buf_readpage);
   cleanup_page_buffer(buf_evictpage);
+  return_free_page(buf_readpage, read_tmp_page);
+#else
+  munmap(read_tmp_page, PAGE_SIZE);
 #endif
   log_trace_out("%s", __func__);
 }

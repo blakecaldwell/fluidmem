@@ -83,6 +83,7 @@ externRAMClientImpl::externRAMClientImpl()
 #if defined(THREADED_PREFETCH) || defined(ASYNREAD)
   tableId_multiread = myClient_multiread->getTableId(clientId);
 #endif
+
   log_trace_out("%s", __func__);
 }
 
@@ -145,7 +146,7 @@ void externRAMClientImpl::dropTable(const char * tag) {
   try {
     myClient->dropTable(tag);
   } catch (RAMCloud::ClientException& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -162,12 +163,13 @@ void externRAMClientImpl::dropTable(const char * tag) {
  -> returns: error code
  **********************************************
  */
-int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
+void * externRAMClientImpl::write(uint64_t hashcode, void **data, int size, int *err) {
   // only a single write RPC is supported
   log_trace_in("%s", __func__);
   RAMCloud::RamCloud * client = myClient;
   uint64_t tid = tableId;
-  int ret = 0;
+  void * ret = NULL;
+  *err = 0;
   declare_timers();
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   client = myClient_write;
@@ -178,16 +180,19 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
     /* write to RAMCloud */
     void * hashcode_ptr = &hashcode;
     start_timing_bucket(start, KVWRITE);
-    client->write(tid, hashcode_ptr, sizeof(uint64_t), data, size);
+    client->write(tid, hashcode_ptr, sizeof(uint64_t), *data, size);
     stop_timing(start, end, KVWRITE);
+
+    // tell libuserfault to free *data
+    ret = *data;
   }
   catch (RAMCloud::ClientException& e) {
-    ret = e.status;
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    *err = e.status;
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    ret = e.errNo;
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    *err = e.errNo;
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -204,29 +209,32 @@ int externRAMClientImpl::write(uint64_t hashcode, void *data, int size) {
  -> returns: length of recvBuf
  **********************************************
  */
-int externRAMClientImpl::read(uint64_t hashcode, void * recvBuf) {
+int externRAMClientImpl::read(uint64_t hashcode, void ** recvBuf) {
   log_trace_in("%s", __func__);
-  int length=0;
-  Buffer RCBuf;
+
   declare_timers();
+  int length=0;
 
   try {
     start_timing_bucket(start, KVREAD);
     myClient->read(tableId, &hashcode, sizeof(uint64_t), &RCBuf);
-    stop_timing(start, end, KVREAD);
-    length = RCBuf.size();
-    /* don't risk overflowing recvBuf */
-    if (length > PAGE_SIZE)
-      length = PAGE_SIZE;
-    start_timing_bucket(start, KVCOPY);
-    RCBuf.copy(0,length,recvBuf);
-    stop_timing(start, end, KVCOPY);
+    stop_timing(start, end, KVREAD)
+
+    // it's possible that peek() will return less than PAGE_SIZE bytes
+    if (RCBuf.getNumberChunks() > 1) {
+      length = RCBuf.copy(0, PAGE_SIZE, *recvBuf);
+      log_debug("%s: copy forced because RAMCloud had a chunk less than %d bytes",
+                __func__, PAGE_SIZE);
+    }
+    else {
+      length = RCBuf.peek(0, recvBuf);
+    }
   } catch (RAMCloud::ClientException& e) {
     if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
-      log_err("RAMCloud exception: %s", e.str().c_str());
+      log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+      log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -272,20 +280,22 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
     {
       if( requests_ptr[j]->status != STATUS_OK )
       {
-        log_err("RAMCloud error: cannot read a value for key %lx", hashcodes[j]);
+        log_err("%s: RAMCloud error: cannot read a value for key %lx", hashcodes[j]);
         continue;
       }
-      int length = values[j].get()->getObject()->getValueLength();
-      recvBufs[j] = malloc(length);
-      memcpy( recvBufs[j], values[j].get()->getValue(), length );
+      uint32_t length = 0;
+      recvBufs[j] = (void *) values[j].get()->getValue(&length);
       lengths[j] = length;
+      if (recvBufs[j] == NULL) {
+        log_err("%s: value from MultiRead is malformed", __func__);
+      }
     }
   }
   catch (RAMCloud::ClientException& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -301,15 +311,19 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
  @ num_write: number of keys to write
  @ data: pointer to an array of buffers to write
  @ lengths: pointer to an array of lengths to write
- -> returns: error code
+ -> returns: should free be called
  **********************************************
  */
-int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths ) {
+bool externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int *err ) {
   log_trace_in("%s", __func__);
+
+  bool should_free = false;
+  void * ret_addr;
+  int read_err;
+  *err = 0;
 
   RAMCloud::RamCloud * client = myClient;
   uint64_t tid = tableId;
-  int ret = 0;
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   client = myClient_write;
   tid = tableId_write;
@@ -329,16 +343,19 @@ int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void **
   catch (RAMCloud::ClientException& e) {
     /* ramcloud status are defined in Status.h */
     /* refer to https://ramcloud.stanford.edu/docs/doxygen/Status_8h_source.html */
-    ret = e.status;
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    *err = e.status;
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    ret = e.errNo;
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    *err = e.errNo;
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
+  // all or nothing
+  should_free = true;
+
   log_trace_out("%s", __func__);
-  return ret;
+  return should_free;
 }
 
 #ifdef ASYNREAD
@@ -352,17 +369,17 @@ int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void **
  -> returns: void
  **********************************************
  */
-void externRAMClientImpl::read_top(uint64_t hashcode, void * recvBuf) {
+void externRAMClientImpl::read_top(uint64_t hashcode, void ** recvBuf) {
   log_trace_in("%s", __func__);
 
   try {
     read_for_asynread = new ReadRpc(myClient, tableId, &hashcode, sizeof(uint64_t), &buf_for_asynread);
   } catch (RAMCloud::ClientException& e) {
     if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
-      log_err("RAMCloud exception: %s", e.str().c_str());
+      log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -378,7 +395,7 @@ void externRAMClientImpl::read_top(uint64_t hashcode, void * recvBuf) {
  -> returns: length of recvBuf
  **********************************************
  */
-int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
+int externRAMClientImpl::read_bottom(uint64_t hashcode, void ** recvBuf) {
   log_trace_in("%s", __func__);
   int length=0;
   declare_timers();
@@ -391,19 +408,21 @@ int externRAMClientImpl::read_bottom(uint64_t hashcode, void * recvBuf) {
     read_for_asynread->wait();
     stop_timing(start, end, KVREAD);
 
-    start_timing_bucket(start, KVCOPY);
-    length = buf_for_asynread.size();
-    /* don't risk overflowing recvBuf */
-    if (length > PAGE_SIZE)
-      length = PAGE_SIZE;
-    buf_for_asynread.copy(0,length,recvBuf);
-    stop_timing(start, end, KVCOPY);
+    // it's possible that peek() will return less than PAGE_SIZE bytes
+    if (RCBuf.getNumberChunks() > 1) {
+      length = buf_for_asynread.copy(0, PAGE_SIZE, *recvBuf);
+      log_debug("%s: copy forced because RAMCloud had a chunk less than %d bytes",
+                __func__, PAGE_SIZE);
+    }
+    else {
+      length = buf_for_asynread.peek(0, recvBuf);
+    }
   } catch (RAMCloud::ClientException& e) {
     if( e.status!=STATUS_OBJECT_DOESNT_EXIST )
-      log_err("RAMCloud exception: %s", e.str().c_str());
+      log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   if( read_for_asynread )
     delete read_for_asynread;
@@ -443,10 +462,10 @@ void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, 
     read_for_asynmread = new MultiRead( client, &requests_ptr_for_asynmread[0], num_prefetch);
   }
   catch (RAMCloud::ClientException& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);
@@ -483,20 +502,22 @@ int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch
     {
       if( requests_ptr_for_asynmread[j]->status != STATUS_OK )
       {
-        log_err("RAMCloud error: cannot read a value for key %lx", hashcodes[j]);
+        log_err("%s: RAMCloud error: cannot read a value for key %lx", __func__, hashcodes[j]);
         continue;
       }
-      int length = buf_for_asynmread[j].get()->getObject()->getValueLength();
-      recvBufs[j] = malloc(length);
-      memcpy( recvBufs[j], buf_for_asynmread[j].get()->getValue(), length );
+      uint32_t length = 0;
+      recvBufs[j] = (void *) buf_for_asynmread[j].get()->getValue(&length);
       lengths[j] = length;
+      if (recvBufs[j] == NULL) {
+        log_err("%s: value from MultiRead is malformed", __func__);
+      }
     }
   }
   catch (RAMCloud::ClientException& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   if( read_for_asynmread )
     delete read_for_asynmread;
@@ -520,9 +541,11 @@ void externRAMClientImpl::multiReadTest()
   char values[3][50] = { "dddddddddddddddddddddd", "fffffffffffffffffff", "gggggggggggggggg" };
   char * buf[3];
   int length[3];
+  int err = 0;
+
   for( int i=0; i<3; i++ )
   {
-    write( keys[i], values[i], strlen(values[i]) );
+    write( keys[i], (void **)&values[i], strlen(values[i]), &err );
   }
 
   multiRead( keys, 3, (void**) buf, length );
@@ -565,10 +588,10 @@ int externRAMClientImpl::remove(uint64_t hashcode) {
     ret = 1;
   }
   catch (RAMCloud::ClientException& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
   catch (RAMCloud::Exception& e) {
-    log_err("RAMCloud exception: %s", e.str().c_str());
+    log_err("%s: RAMCloud exception: %s", __func__, e.str().c_str());
   }
 
   log_trace_out("%s", __func__);

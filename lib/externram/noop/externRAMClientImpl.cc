@@ -105,43 +105,55 @@ externRAMClientImpl::~externRAMClientImpl()
  @ hashcode: unique key
  @ data: buffer pointing to data to be stored in map
  @ size: length in bytes of the data to be stored
+ @ returns: pointer of buffer to free
  **********************************************
  */
-int externRAMClientImpl::write(uint64_t key, void *value, int size) {
+void* externRAMClientImpl::write(uint64_t key, void **value, int size, int *err) {
   log_trace_in("%s", __func__);
   declare_timers();
   kvStore::iterator it;
+  // declaring pair for return value of map containing 
+  // map iterator and bool 
+  pair< unordered_map<uint64_t, page_data>::iterator, bool> ptr;
 
-  log_debug("%s: got key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, size));
-  start_timing_bucket(start, KVWRITE);
+  void * ret = NULL;
+  // no errors from no-op backend (for retrying)
+  *err = 0;
 
   log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
   log_lock("%s: locked noop_mutex", __func__);
 
+  start_timing_bucket(start, KVWRITE);
   it = kv.find(key);
   if (it != kv.end()) {
-    start_timing_bucket(start, KVCOPY);
-    memcpy(it->second, value, PAGE_SIZE);
-    stop_timing(start, end, KVCOPY);
+    // exists in kv store. tell libuserfault to delete old value
+    ret = it->second;
+    // move the new one
+    it->second = (page_data) *value;
+    log_debug("%s: put old key %p with buffer %p and hash %x", __func__, it->first,
+              it->second, (uint32_t) jenkins_hash((uint8_t *) it->second, size));
+    log_debug("%s: old buffer %p can be freed", __func__, ret);
   }
   else {
-    start_timing_bucket(start, KVCOPY);
-    uint8_t * value_toStore = (uint8_t *) malloc(PAGE_SIZE);
-    memcpy(value_toStore, value, PAGE_SIZE);
-    stop_timing(start, end, KVCOPY);
-
-    kv.emplace(key, value_toStore);
+    ptr = kv.emplace(key, (page_data) *value);
+    // leave ret = NULL so that libuserfault doesn't delete the buffer
+ 
+    if (!ptr.second) {
+      log_err("%s: emplace says key already exists, but we checked before!", __func__);
+    }
+    log_debug("%s: put new key %p with buffer %p and hash %x", __func__, ptr.first->first,
+              ptr.first->second, (uint32_t) jenkins_hash((uint8_t *) ptr.first->second, size));
   }
+  stop_timing(start, end, KVWRITE);
 
   log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
   log_lock("%s: unlocked noop_mutex", __func__);
 
-  stop_timing(start, end, KVWRITE);
-
   log_trace_out("%s", __func__);
-  return 0;
+
+  return ret;
 }
 
 /*
@@ -154,58 +166,49 @@ int externRAMClientImpl::write(uint64_t key, void *value, int size) {
  -> returns: length of value
  **********************************************
  */
-int externRAMClientImpl::read(uint64_t key, void * value) {
+int externRAMClientImpl::read(uint64_t key, void ** value) {
   log_trace_in("%s", __func__);
   declare_timers();
 
-  page_data page_value;
+  int ret;
+  kvStore::iterator it;
 
-  start_timing_bucket(start, KVREAD);
   log_debug("%s: reading page %p", __func__, key);
+
   log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
   log_lock("%s: locked noop_mutex", __func__);
 
-  try {
-    if (!value) {
-      log_err("%s: buffer at %p for key %p has not been allocated", __func__, value, key);
-      return -1;
-    }
-    page_value = kv.at(key);
-    stop_timing(start, end, KVREAD);
-    start_timing_bucket(start, KVCOPY);
-    memcpy(value, page_value, PAGE_SIZE);
+  start_timing_bucket(start, KVREAD);
+  it = kv.find(key);
+  if (it != kv.end()) {
+    *value = it->second;
+    ret = PAGE_SIZE;
   }
-  catch (const out_of_range& oor) {
+  else {
     // not yet found in externram
-    log_lock("%s: unlocking noop_mutex", __func__);
-    pthread_mutex_unlock(&noop_mutex);
-    log_lock("%s: unlocked noop_mutex", __func__);
-
-    stop_timing(start, end, KVCOPY);
-
     log_debug("%s: read for key %p failed: not found", __func__, key);
     log_trace_out("%s", __func__);
-    return 0;
+    ret = 0;
   }
+  stop_timing(start, end, KVREAD);
 
   log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
   log_lock("%s: unlocked noop_mutex", __func__);
-  stop_timing(start, end, KVCOPY);
 
-  log_debug("%s: retrieved key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, PAGE_SIZE));
+  log_debug("%s: retrieved key %p with buffer %p and hash %x", __func__, key, *value, (uint32_t) jenkins_hash((uint8_t *) *value, PAGE_SIZE));
 
   log_trace_out("%s", __func__);
   return PAGE_SIZE;
 }
 
 #ifdef ASYNREAD
-void externRAMClientImpl::read_top(uint64_t key, void * value) {
+void externRAMClientImpl::read_top(uint64_t key, void ** value) {
   return;
 }
 
-int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
+int externRAMClientImpl::read_bottom(uint64_t key, void ** value) {
   log_trace_in("%s", __func__);
   int ret = read(key, value);
   log_trace_out("%s", __func__);
@@ -227,15 +230,11 @@ int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
  */
 int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
   int rc = num_prefetch;
-
   log_trace_in("%s", __func__);
 
   for( int i=0; i<num_prefetch; i++ )
   {
-    recvBufs[i] = malloc(PAGE_SIZE);
-    if (!recvBufs[i])
-      log_err("%s: failed to allocate multiread buffer", __func__);
-    lengths[i] = read( hashcodes[i], recvBufs[i] );
+    lengths[i] = read( hashcodes[i], &recvBufs[i] );
     if (lengths[i] <= 0)
       rc--;
   }
@@ -246,12 +245,6 @@ int externRAMClientImpl::multiRead(uint64_t * hashcodes, int num_prefetch, void 
 #ifdef ASYNREAD
 void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
   log_trace_in("%s", __func__);
-  for( int i=0; i<num_prefetch; i++ )
-  {
-    recvBufs[i] = malloc(PAGE_SIZE);
-    if (!recvBufs[i])
-      log_err("%s: failed to allocate multiread buffer", __func__);
-  }
   log_trace_out("%s", __func__);
   return;
 }
@@ -262,7 +255,7 @@ int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch
 
   for( int i=0; i<num_prefetch; i++ )
   {
-    lengths[i] = read( hashcodes[i], recvBufs[i] );
+    lengths[i] = read( hashcodes[i], &recvBufs[i] );
     if (lengths[i] <= 0)
       rc--;
   }
@@ -281,20 +274,28 @@ int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch
  @ num_write: number of keys to write
  @ data: pointer to an array of buffers to write
  @ lengths: pointer to an array of lengths to write
- -> returns: error code
+ -> returns: should free be called
  **********************************************
  */
-int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths) {
+bool externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int *err) {
   log_trace_in("%s", __func__);
-  int ret = 0;
+  bool should_free = false;
+  void * ret_addr;
+  int read_err;
+  *err = 0;
+
   for( int i=0; i<num_write; i++ )
   {
-    ret = write( hashcodes[i], data[i], lengths[i] );
-    if( ret>0 )
-      return ret;
+    ret_addr = write( hashcodes[i], &data[i], lengths[i], &read_err );
+    if( read_err < 0)
+      *err = read_err;
+    if( ret_addr != NULL ) {
+      should_free = true;
+    }
+    data[i] = ret_addr;
   }
   log_trace_out("%s", __func__);
-  return ret;
+  return should_free;
 }
 
 /*

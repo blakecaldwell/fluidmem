@@ -32,9 +32,6 @@
 #include <sys/user.h> /* for PAGE_SIZE */
 #include <buffer_allocator_array.h>
 
-#ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
-char* zeroPage;
-#endif
 struct LRUBuffer *           PageCache::lruBuffer=NULL;
 
 /*
@@ -52,12 +49,9 @@ PageCache * PageCache::create( struct LRUBuffer *lru )
   lruBuffer = lru;
 
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
-  log_debug("%s: page cache zero page optimization enabled.", __func__);
-  log_debug("%s: page size %d", __func__, PAGE_SIZE);
-  zeroPage = (char *) malloc(PAGE_SIZE);
-  memset(zeroPage, 0, PAGE_SIZE);
+  log_info("%s: page cache zero page optimization enabled.", __func__);
 #else
-  log_debug("%s: page cache zero page optimization disabled.", __func__);
+  log_info("%s: page cache zero page optimization disabled.", __func__);
 #endif
   log_trace_out("%s", __func__);
   return (impl.get());
@@ -241,15 +235,6 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
     StatsIncrCacheHit_notlocked();
 #endif
 
-#ifdef THREADED_REINIT
-    *buf = get_tmp_page(buf_readpage);
-#else
-    *buf = get_local_tmp_page();
-#endif
-    if (!*buf) {
-      log_err("failed to get read tmp page");
-      return;
-    }
   }
   else if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_EXTERNRAM )
   {
@@ -257,16 +242,6 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
 #ifdef MONITORSTATS
     StatsIncrCacheMiss_notlocked();
 #endif
-
-#ifdef THREADED_REINIT
-    *buf = get_tmp_page(buf_readpage);
-#else
-    *buf = get_local_tmp_page();
-#endif
-    if (!*buf) {
-      log_err("failed to get read tmp page");
-      return;
-    }
 
     // If the page is in externRAM, return the page in externRAM
     if( !enable_prefetch )
@@ -280,11 +255,14 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
 #endif
         struct externRAMClient *client = get_client_by_fd(fd);
         if (client) {
+          // actually reading the page from externram, so we must allocate a page buffer
+
           start_timing_bucket(g_start, READ_PAGE);
 #ifdef ASYNREAD
-          readPage_top( client, hashcode, *buf );
+          log_debug("%s: preparing read for single page with key %lx", __func__, hashcode);
+          readPage_top( client, hashcode, buf );
 #endif
-	}
+        }
         else
           log_err("%s: failed to read page %lx for invalid fd %d", __func__, hashcode, fd);
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
@@ -293,18 +271,20 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
     }
     else
     {
-      float avgSequentialAccessNum = 10;
-      int i=1;
-      numPrefetch = 0;
-
+      // prefetch is enabled
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
       if( itr->second->is_zeropage==true )
       {
         goto read_page_if_in_page_cache_out_top;
       }
 #endif
-      memset( bufs_for_mread, 0, sizeof(bufs_for_mread) );
+
+      // prepare prefetch structures
+      float avgSequentialAccessNum = 10;
+      int i=1;
+      numPrefetch = 0;
       keys_for_mread[0] = hashcode;
+
 #if defined(THREADED_WRITE_TO_EXTERNRAM) || defined(THREADED_PREFETCH)
       log_lock("%s: unlocking list_lock", __func__);
       pthread_mutex_lock(&list_lock);
@@ -315,6 +295,8 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
 #endif
       while( numPrefetch<numConseqAcc )
       {
+        log_debug("%s: passed criteria for prefetch: will fetch %d keys after %d consecutive accesses", __func__, numPrefetch, numConseqAcc);
+
         uint64_t testaddr = hashcode + i * PAGE_SIZE;
         char t[sizeof(uint64_t)+sizeof(int)];
         *((uint64_t*) &t[0]) = testaddr;
@@ -345,14 +327,26 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
           add_prefetch_info( fd, testaddr );
 #else
           keys_for_mread[numPrefetch+1] = testaddr;
-#endif
+
+#endif // THREADED_PREFETCH
           numPrefetch++;
           log_debug("%s: Prefetching a page %lx fd %d.", __func__, testaddr, fd);
         }
-        if( numPrefetch>=prefetch_size || i>100 ) // i>100 )
+
+        if( numPrefetch>=prefetch_size ) {
+          log_debug("%s: breaking prefetch up because numPrefetch has reached prefetch_size", __func__, prefetch_size);
           break;
+        }
+        if ( i>100 ) {
+          // TODO: can this be removed?
+          log_debug("%s: breaking prefetch up because %d pages have been added already", __func__, i);
+          break;
+        }
         i++;
       }
+      buf = bufs_for_mread;
+      // prefetch structures prepared
+
 #if defined(THREADED_WRITE_TO_EXTERNRAM) || defined(THREADED_PREFETCH)
 #ifdef THREADED_PREFETCH
       int list_size = get_prefetch_list_size();
@@ -360,7 +354,9 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
       log_lock("%s: unlocking list_lock", __func__);
       pthread_mutex_unlock(&list_lock);
       log_lock("%s: unlocked list_lock", __func__);
-#endif
+#endif // defined(THREADED_WRITE_TO_EXTERNRAM) || defined(THREADED_PREFETCH)
+
+      // start the prefetch in externram
       struct externRAMClient *client = get_client_by_fd(fd);
       if (client) {
 #ifdef THREADED_PREFETCH
@@ -369,14 +365,14 @@ void PageCacheImpl::readPageIfInPageCache_top( uint64_t hashcode, int fd, void *
 
         start_timing_bucket(g_start, READ_PAGE);
 #ifdef ASYNREAD
-        readPage_top( client, hashcode, *buf );
+        readPage_top( client, hashcode, buf );
 #endif
 #else
         start_timing_bucket(g_start, READ_PAGES);
 #ifdef ASYNREAD
         readPages_top( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
 #endif
-#endif
+#endif // THREADED_PREFETCH
       }
     }
   }
@@ -405,15 +401,16 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
   *((int*) &t[sizeof(uint64_t)]) = fd;
   std::string k(t,sizeof(uint64_t)+sizeof(int));
   page_hash::iterator itr = pagehash.find(k);
+
+  // TODO this second pagehash lookup could be avoided
   if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_PAGE_CACHE )
   {
     // If the page is in the cache, return the page in cache
     List::iterator itr2 = pageCache.find( hashcode, fd );
     if( itr2!=pageCache.findEnd() )
     {
-      memcpy(*buf, itr2->address, itr2->size );
+      *buf = itr2->address;
       size = itr2->size;
-      free( (void*)itr2->address );
     }
     pageCache.erase( hashcode, fd );
     changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
@@ -435,10 +432,10 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
         struct externRAMClient *client = get_client_by_fd(fd);
         if (client) {
 #ifdef ASYNREAD
-          size = readPage_bottom( client, hashcode, *buf );
-#else 
-          size = readPage( client, hashcode, *buf );
-#endif
+          size = readPage_bottom( client, hashcode, buf );
+#else
+          size = readPage( client, hashcode, buf );
+#endif // ASYNREAD
           stop_timing(g_start, g_end, READ_PAGE);
 	}
         else
@@ -450,6 +447,7 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
     }
     else
     {
+      // prefetch is enabled
 #ifdef PAGECACHE_ZEROPAGE_OPTIMIZATION
       if( itr->second->is_zeropage==true )
       {
@@ -462,10 +460,10 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
       if (client) {
 #ifdef THREADED_PREFETCH
 #ifdef ASYNREAD
-        size = readPage_bottom( client, hashcode, *buf );
+        size = readPage_bottom( client, hashcode, buf );
 #else
-        size = readPage( client, hashcode, *buf );
-#endif
+        size = readPage( client, hashcode, buf );
+#endif // ASYNREAD
         stop_timing(g_start, g_end, READ_PAGE);
 
         changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
@@ -474,15 +472,18 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
         readPages_bottom( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
 #else
         readPages( client, keys_for_mread, numPrefetch+1, (void**) bufs_for_mread, lengths_for_mread );
-#endif
+#endif // ASYNREAD
         stop_timing(g_start, g_end, READ_PAGES);
 
         if( bufs_for_mread[0]!=NULL )
         {
           size = lengths_for_mread[0];
-          memcpy(*buf, bufs_for_mread[0], size );
+          *buf = bufs_for_mread[0];
           changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION );
-          free( bufs_for_mread[0] );
+        }
+        else {
+          log_err("%s: failed to get the first page %p in multiread which is page faulted on by %d",
+                  __func__, keys_for_mread[0], fd);
         }
 #ifdef DEBUG
         for(int i=0; i<numPrefetch+1; i++)
@@ -494,7 +495,7 @@ int PageCacheImpl::readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void
         {
           storePagesInPageCache(&keys_for_mread[1], fd, numPrefetch, (char**) &bufs_for_mread[1], &lengths_for_mread[1]);
         }
-#endif
+#endif // THREADED_PREFETCH
       }
       else
         log_warn("%s: failed to read page %lx with invalid fd %d", __func__, hashcode, fd);
@@ -572,7 +573,10 @@ void PageCacheImpl::storePageInPageCache(uint64_t hashcode, int fd, void * buf, 
 {
   log_trace_in("%s", __func__);
 
-  assert( buf!=NULL && length==PAGE_SIZE );
+  if (length != PAGE_SIZE) {
+    log_err("%s: length is %d, not PAGE_SIZE", __func__, length);
+  }
+  assert( buf!=NULL );
 
   char t[sizeof(uint64_t)+sizeof(int)];
   *((uint64_t*) &t[0]) = hashcode;
@@ -685,6 +689,9 @@ uint64_t * PageCacheImpl::removeUFDFromPageCache(int fd, int * numPages) {
     if (itr->fd == fd) {
       // this node will be removed
       keyVector.push_back(itr->hashcode & (uint64_t)(PAGE_MASK));
+      log_debug("%s: freeing %p from ufd %d page cache entry for 0x%lx", __func__,
+               itr->address, fd, itr->hashcode, fd);
+      free( itr->address );
       pageCache.erase(itr->hashcode, fd);
     }
   }

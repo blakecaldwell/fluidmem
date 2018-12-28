@@ -29,13 +29,13 @@ public:
     static externRAMClient *        create(int impl_type, char * config, uint64_t upid);
 
     // API with clients of externRAMClient
-    virtual int         write(uint64_t, void *, int ){};
-    virtual int         multiWrite(uint64_t *,int,void **,int *){};
-    virtual int         read(uint64_t, void *){return 0;};
+    virtual void *      write(uint64_t, void **, int, int * ){};
+    virtual bool        multiWrite(uint64_t *,int,void **,int *, int *){};
+    virtual int         read(uint64_t, void **){return 0;};
     virtual int         multiRead(uint64_t *,int,void **,int *){};
 #ifdef ASYNREAD
-    virtual void        read_top(uint64_t, void *){};
-    virtual int         read_bottom(uint64_t, void *){};
+    virtual void        read_top(uint64_t, void **){};
+    virtual int         read_bottom(uint64_t, void **){};
     virtual void        multiRead_top(uint64_t *,int,void **,int *){};
     virtual int         multiRead_bottom(uint64_t *,int,void **,int *){};
 #endif

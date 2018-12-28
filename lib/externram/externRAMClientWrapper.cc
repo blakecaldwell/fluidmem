@@ -24,57 +24,59 @@ extern "C" {
     return client;
   }
 
-  void writePage(externRAMClient *c, uint64_t key, void * value) {
+  void * writePage(externRAMClient *c, uint64_t key, void ** value) {
     int size;
-    int ret = 0;
+    void * ret;
+    int err = 0;
     int cnt = 0;
     size = PAGE_SIZE;
     while( true ) {
-      ret = c->write(key, value, size);
-      if( ret==0 )
-        break;
-      else {
+      ret = c->write(key, value, size, &err);
+      if( err < 0 ) {
         if( cnt%NUM_ERRORS_TO_CHECK_ISFULL==0 && isFull(c, key) )
           log_recoverable_err( "The externRAM is full." );
         sleep(1);
       }
+      else {
+        break;
+      }
       cnt++;
     }
+    return ret;
   }
 
-  void writePages(externRAMClient *c, uint64_t * keys, int num_write, void ** data, int * lengths) {
-    /* data has already been allocated by client (page size) */
-    int ret = 0;
+  bool writePages(externRAMClient *c, uint64_t * keys, int num_write, void ** data, int * lengths) {
+    bool ret;
+    int err = 0;
     int cnt = 0;
     while( true ) {
-      c->multiWrite(keys, num_write, data, lengths);
-      if( ret==0 )
-        break;
-      else {
+      ret = c->multiWrite(keys, num_write, data, lengths, &err);
+      if( err < 0 ) {
         if( cnt%NUM_ERRORS_TO_CHECK_ISFULL==0 && isFullAll(c) )
           log_recoverable_err( "The externRAM is full." );
         sleep(1);
       }
+      else {
+        break;
+      }
       cnt++;
     }
+    return ret;
   }
 
-  int readPage(externRAMClient *c, uint64_t key, void * recvBuf) {
-    /* recvBuf has already been allocated by client (page size) */
+  int readPage(externRAMClient *c, uint64_t key, void ** recvBuf) {
     return c->read(key,recvBuf);
   }
 
   void readPages(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths) {
-    /* recvBuf has already been allocated by client (page size) */
-
     c->multiRead(keys, num_prefetch, recvBufs, lengths);
   }
 
 #ifdef ASYNREAD
-  void readPage_top(externRAMClient *c, uint64_t key, void * recvBuf) {
+  void readPage_top(externRAMClient *c, uint64_t key, void ** recvBuf) {
     c->read_top(key,recvBuf);
   }
-  int readPage_bottom(externRAMClient *c, uint64_t key, void * recvBuf) {
+  int readPage_bottom(externRAMClient *c, uint64_t key, void ** recvBuf) {
     return c->read_bottom(key,recvBuf);
   }
   void readPages_top(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths) {

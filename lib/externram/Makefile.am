@@ -35,11 +35,10 @@ EXTERNRAM_FLAGS += -DTIMING
 endif
 
 libexternramClientImpl_la_SOURCES = externRAMClient.hh
-libexternramClientImpl_la_CPPFLAGS = -std=c++0x -I$(SCALEOS_ROOT)/include -I$(SCALEOS_ROOT)/lib/monitorstats $(EXTERNRAM_FLAGS)
+libexternramClientImpl_la_CPPFLAGS = -std=c++0x -I$(SCALEOS_ROOT)/include -I$(SCALEOS_ROOT)/lib/monitorstats -I$(SCALEOS_ROOT)/lib/userfault $(EXTERNRAM_FLAGS)
 libexternramClientImpl_la_LDFLAGS = -L$(SCALEOS_ROOT)/lib/monitorstats/.libs \
-  -rpath,$(SCALEOS_ROOT)/lib/monitorstats/.libs
+  -Wl,-rpath,$(SCALEOS_ROOT)/lib/monitorstats/.libs
 libexternramClientImpl_la_LIBADD = -lmonitorstats
-
 if RAMCLOUD
 libexternramClientImpl_la_SOURCES += ramcloud/externRAMClientImpl.hh ramcloud/externRAMClientImpl.cc
 libexternramClientImpl_la_CPPFLAGS += -I/include/ramcloud -I/include/gtest/include
@@ -54,7 +53,9 @@ endif
 
 if MEMCACHED
 libexternramClientImpl_la_SOURCES += memcached/externRAMClientImpl.hh memcached/externRAMClientImpl.cc
-libexternramClientImpl_la_LIBADD += -lmemcached -lmemcachedutil -lpthread
+libexternramClientImpl_la_LIBADD += -lmemcached \
+  -lmemcachedutil \
+  -lpthread
 endif
 
 if NOOP

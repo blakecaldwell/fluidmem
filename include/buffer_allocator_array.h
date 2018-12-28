@@ -18,6 +18,7 @@ static inline void * get_local_tmp_page(void) {
       return NULL;
   }
 
+  log_debug("%s: local_tmp_page=%p", __func__, local_tmp_page);
   log_trace_out("%s", __func__);
   return local_tmp_page;
 }
@@ -228,6 +229,7 @@ int return_free_page(page_buffer_info* buf, void* addr) {
   int ret = 0;
   ret = munmap(addr, PAGE_SIZE);
   log_trace_out("%s", __func__);
+  log_debug("%s: freed page %p", __func__, addr);
   return ret;
 }
 

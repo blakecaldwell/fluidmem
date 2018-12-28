@@ -42,14 +42,14 @@ public:
   virtual ~externRAMClientImpl();
   externRAMClientImpl();
 
-  virtual int         write(uint64_t key, void *data, int size);
+  virtual void *      write(uint64_t key, void **data, int size, int * err);
   // get returns size of value retrieved
-  virtual int         read(uint64_t key, void * value);
+  virtual int         read(uint64_t key, void ** value);
   virtual int         multiRead(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
-  virtual int         multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths);
+  virtual bool        multiWrite(uint64_t * hashcodes, int num_write, void ** data, int * lengths, int * err);
 #ifdef ASYNREAD
-  virtual void        read_top(uint64_t key, void * value);
-  virtual int         read_bottom(uint64_t key, void * value);
+  virtual void        read_top(uint64_t key, void ** value);
+  virtual int         read_bottom(uint64_t key, void ** value);
   virtual void        multiRead_top(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
   virtual int         multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths);
 #endif

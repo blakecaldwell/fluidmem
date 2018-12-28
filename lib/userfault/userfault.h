@@ -36,11 +36,15 @@
 #define MOVE_PAGE 2
 #define ASYN_PAGE 3
 
+#define MAX_MULTI_READ 200
+#define MAX_MULTI_WRITE 200
+
 /*
  * Global variables
  */
 char* zeroPage;
 char* zookeeperConn;
+void *read_tmp_page;
 
 #ifdef TIMING
 int bucket_index;

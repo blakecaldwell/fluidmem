@@ -26,12 +26,13 @@ typedef struct externRAMClient externRAMClient;
 
 externRAMClient* newExternRAMClient(int type, char * config, uint64_t upid);
 
-void writePage(externRAMClient* c, uint64_t key, void * value);
-int readPage(externRAMClient *c, uint64_t key, void * recvBuf);
+void * writePage(externRAMClient* c, uint64_t key, void ** value);
+bool writePages(externRAMClient *c, uint64_t * keys, int num_write, void ** data, int * lengths);
+int readPage(externRAMClient *c, uint64_t key, void ** recvBuf);
 void readPages(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths);
 #ifdef ASYNREAD
-void readPage_top(externRAMClient *c, uint64_t key, void * recvBuf);
-int readPage_bottom(externRAMClient *c, uint64_t key, void * recvBuf);
+void readPage_top(externRAMClient *c, uint64_t key, void ** recvBuf);
+int readPage_bottom(externRAMClient *c, uint64_t key, void ** recvBuf);
 void readPages_top(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths);
 int readPages_bottom(externRAMClient *c, uint64_t * keys, int num_prefetch, void ** recvBufs, int * lengths);
 #endif
