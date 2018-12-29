@@ -9,7 +9,7 @@
  * externRAMClientImpl.hh
  *
  * This defines the implementation class of the interface externRAMClient
- * that deals specifically with a C++ map
+ * that deals specifically with a C++ unordered_map
 */
 
 
@@ -17,7 +17,7 @@
 #define _EXTERNRAMCLIENTIMPL_H_
 #include <externRAMClient.hh>
 #include <sys/user.h>
-#include <map>
+#include <unordered_map>
 
 using namespace std;
 
@@ -32,7 +32,7 @@ struct null_deleter
 class externRAMClientImpl: public externRAMClient
 {
   typedef uint8_t * page_data;
-  typedef map<uint64_t, page_data> kvStore;
+  typedef unordered_map<uint64_t, page_data> kvStore;
 
 private:
   kvStore kv;

@@ -110,16 +110,34 @@ externRAMClientImpl::~externRAMClientImpl()
 int externRAMClientImpl::write(uint64_t key, void *value, int size) {
   log_trace_in("%s", __func__);
   declare_timers();
+  kvStore::iterator it;
 
   log_debug("%s: got key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, size));
-  start_timing_bucket(start, KVCOPY);
-  uint8_t * value_toStore = (uint8_t *) malloc(PAGE_SIZE);
-  memcpy(value_toStore, value, PAGE_SIZE);
-  stop_timing(start, end, KVCOPY);
   start_timing_bucket(start, KVWRITE);
+
+  log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
-  kv[key] = value_toStore;
+  log_lock("%s: locked noop_mutex", __func__);
+
+  it = kv.find(key);
+  if (it != kv.end()) {
+    start_timing_bucket(start, KVCOPY);
+    memcpy(it->second, value, PAGE_SIZE);
+    stop_timing(start, end, KVCOPY);
+  }
+  else {
+    start_timing_bucket(start, KVCOPY);
+    uint8_t * value_toStore = (uint8_t *) malloc(PAGE_SIZE);
+    memcpy(value_toStore, value, PAGE_SIZE);
+    stop_timing(start, end, KVCOPY);
+
+    kv.emplace(key, value_toStore);
+  }
+
+  log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
+  log_lock("%s: unlocked noop_mutex", __func__);
+
   stop_timing(start, end, KVWRITE);
 
   log_trace_out("%s", __func__);
@@ -142,33 +160,40 @@ int externRAMClientImpl::read(uint64_t key, void * value) {
 
   page_data page_value;
 
+  start_timing_bucket(start, KVREAD);
   log_debug("%s: reading page %p", __func__, key);
   log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
   log_lock("%s: locked noop_mutex", __func__);
-  start_timing_bucket(start, KVREAD);
+
   try {
+    if (!value) {
+      log_err("%s: buffer at %p for key %p has not been allocated", __func__, value, key);
+      return -1;
+    }
     page_value = kv.at(key);
+    stop_timing(start, end, KVREAD);
+    start_timing_bucket(start, KVCOPY);
+    memcpy(value, page_value, PAGE_SIZE);
   }
   catch (const out_of_range& oor) {
-    discard_timing();
+    // not yet found in externram
     log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
     log_lock("%s: unlocked noop_mutex", __func__);
+
+    stop_timing(start, end, KVCOPY);
+
     log_debug("%s: read for key %p failed: not found", __func__, key);
     log_trace_out("%s", __func__);
     return 0;
   }
-  stop_timing(start, end, KVREAD);
-
-  pthread_mutex_unlock(&noop_mutex);
-  start_timing_bucket(start, KVCOPY);
-  memcpy(value, page_value, PAGE_SIZE);
-  stop_timing(start, end, KVCOPY);
 
   log_lock("%s: unlocking noop_mutex", __func__);
   pthread_mutex_unlock(&noop_mutex);
   log_lock("%s: unlocked noop_mutex", __func__);
+  stop_timing(start, end, KVCOPY);
+
   log_debug("%s: retrieved key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, PAGE_SIZE));
 
   log_trace_out("%s", __func__);
@@ -182,40 +207,9 @@ void externRAMClientImpl::read_top(uint64_t key, void * value) {
 
 int externRAMClientImpl::read_bottom(uint64_t key, void * value) {
   log_trace_in("%s", __func__);
-  declare_timers();
-
-  page_data page_value;
-
-  log_debug("%s: reading page %p", __func__, key);
-
-  log_lock("%s: locking noop_mutex", __func__);
-  pthread_mutex_lock(&noop_mutex);
-  log_lock("%s: locked noop_mutex", __func__);
-  start_timing_bucket(start, KVREAD);
-  try {
-    page_value = kv.at(key);
-  }
-  catch (const out_of_range& oor) {
-    discard_timing();
-    log_lock("%s: unlocking noop_mutex", __func__);
-    pthread_mutex_unlock(&noop_mutex);
-    log_lock("%s: unlocked noop_mutex", __func__);
-    log_debug("%s: read for key %p failed: not found", __func__, key);
-    log_trace_out("%s", __func__);
-    return 0;
-  }
-  stop_timing(start, end, KVREAD);
-
-  start_timing_bucket(start, KVCOPY);
-  memcpy(value, page_value, PAGE_SIZE);
-  stop_timing(start, end, KVCOPY);
-  log_lock("%s: unlocking noop_mutex", __func__);
-  pthread_mutex_unlock(&noop_mutex);
-  log_lock("%s: unlocked noop_mutex", __func__);
-  log_debug("%s: retrieved key %p with hash %x", __func__, key, (uint32_t) jenkins_hash((uint8_t *) value, PAGE_SIZE));
-
+  int ret = read(key, value);
   log_trace_out("%s", __func__);
-  return PAGE_SIZE;
+  return ret;
 }
 #endif
 
@@ -264,16 +258,15 @@ void externRAMClientImpl::multiRead_top(uint64_t * hashcodes, int num_prefetch, 
 
 int externRAMClientImpl::multiRead_bottom(uint64_t * hashcodes, int num_prefetch, void ** recvBufs, int * lengths) {
   int rc = num_prefetch;
-
   log_trace_in("%s", __func__);
-  pthread_mutex_lock(&noop_mutex);
+
   for( int i=0; i<num_prefetch; i++ )
   {
     lengths[i] = read( hashcodes[i], recvBufs[i] );
     if (lengths[i] <= 0)
       rc--;
   }
-  pthread_mutex_unlock(&noop_mutex);
+
   log_trace_out("%s", __func__);
   return rc;
 }
@@ -316,24 +309,30 @@ int externRAMClientImpl::multiWrite(uint64_t * hashcodes, int num_write, void **
 int externRAMClientImpl::remove(uint64_t key) {
   log_trace_in("%s", __func__);
 
+  kvStore::iterator it;
   int ret = 0;
 
+  log_lock("%s: locking noop_mutex", __func__);
   pthread_mutex_lock(&noop_mutex);
-  page_data page_value;
-  try {
-    page_value = kv.at(key);
-  }
-  catch (const out_of_range& oor) {
+  log_lock("%s: locked noop_mutex", __func__);
+
+  it = kv.find(key);
+  if (it != kv.end()) {
+    free(it->second);
+    kv.erase(it);
+    log_lock("%s: unlocking noop_mutex", __func__);
     pthread_mutex_unlock(&noop_mutex);
-    log_warn("%s: remove for key %p failed: not found", __func__, key);
-    log_trace_out("%s", __func__);
-    return 0;
+    log_lock("%s: unlocked noop_mutex", __func__);
+    ret = -1;
   }
+  else {
+    log_lock("%s: unlocking noop_mutex", __func__);
+    pthread_mutex_unlock(&noop_mutex);
+    log_lock("%s: unlocked noop_mutex", __func__);
 
-  ret = kv.erase(key);
-  pthread_mutex_unlock(&noop_mutex);
-
-  free(page_value);
+    log_warn("%s: remove for key %p failed: not found", __func__, key);
+    ret = 0;
+  }
 
   log_trace_out("%s", __func__);
   return ret;
