@@ -54,11 +54,13 @@ extern struct PageCache * pageCache;
 extern int stop_by_ui;
 int isDisconnected = 0;
 
+#ifdef MONITORSTATS
 #ifdef TIMING
 uint32_t max_bucket_slots;
 char ** reverse_buckets;
 uint32_t buckets_mask;
 TimingBucket * timing_buckets;
+#endif
 #endif
 
 void signal_callback_handler(int signum)

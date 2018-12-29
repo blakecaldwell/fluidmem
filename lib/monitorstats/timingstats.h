@@ -327,6 +327,10 @@ static inline void store_bucket(BucketType bucket, float value)
   if (((1<<((int)bucket)) & buckets_mask) == 0)
     goto store_bucket_out;
 
+  log_lock("%s: locking timing_buckets[%s].bucket_lock", __func__, reverse_buckets[bucket]);
+  pthread_mutex_lock(&timing_buckets[bucket].bucket_lock);
+  log_lock("%s: locked timing_buckets[%s].bucket_lock", __func__, reverse_buckets[bucket]);
+
   if (timing_buckets[bucket].num_items == max_bucket_slots) {
     double current_sum = StatsGetBucketSum(bucket);
     uint64_t old_num_samples = timing_buckets[bucket].overflow * max_bucket_slots;
@@ -345,10 +349,6 @@ static inline void store_bucket(BucketType bucket, float value)
     if (timing_buckets[bucket].overflow++ != UINT32_MAX)
       timing_buckets[bucket].overflow++;
   }
-
-  log_lock("%s: locking timing_buckets[%s].bucket_lock", __func__, reverse_buckets[bucket]);
-  pthread_mutex_lock(&timing_buckets[bucket].bucket_lock);
-  log_lock("%s: locked timing_buckets[%s].bucket_lock", __func__, reverse_buckets[bucket]);
 
   timing_buckets[bucket].values[timing_buckets[bucket].num_items] = value;
   timing_buckets[bucket].num_items++;
