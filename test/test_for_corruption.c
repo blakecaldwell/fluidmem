@@ -1,4 +1,4 @@
-/* 
+/*
  * Copyright 2015 Blake Caldwell, University of Colorado,  All Rights Reserved
  * Unauthorized copying of this file, via any medium is strictly prohibited
  * Proprietary and confidential
@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/user.h> /* for PAGE_SIZE */
 
 #include "userfault-client.h"
 #include <dbg.h>
@@ -54,6 +55,20 @@ void cleanup(void) {
     free(shadow);
 }
 
+uint32_t jenkins_hash(uint8_t *key, size_t len)
+{
+    uint32_t hash, i;
+    for(hash = i = 0; i < len; ++i)
+    {
+        hash += key[i];
+        hash += (hash << 10);
+        hash ^= (hash >> 6);
+    }
+    hash += (hash << 3);
+    hash ^= (hash >> 11);
+    hash += (hash << 15);
+    return hash;
+}
 
 void
 fatal_error_signal (int sig)
@@ -132,6 +147,7 @@ int main (int argc, char * argv[]) {
     log_err("failed to allocate userfault region");
     return 1;
   }
+  log_debug("allocated region at %p", arr);
 
   /* shadow array should mirror arr, but non-userfault region */
   shadow = (uint8_t*)malloc(len * sizeof(uint8_t));
@@ -139,6 +155,7 @@ int main (int argc, char * argv[]) {
     log_err("failed to allocate shadow region");
     return 1;
   }
+  memset(shadow, 0, len * sizeof(uint8_t));
 
   if (dirty) {
     /* dirty the data */
@@ -161,22 +178,30 @@ int main (int argc, char * argv[]) {
      * on subsequent accesses, it should either have the value in the page cache
      * or externram.
      */
-    rand_index = rand_lim(len-1)/1024 * 1024;
+    rand_index = rand_lim(len-1)/PAGE_SIZE* PAGE_SIZE;
 
-    value = arr[rand_index];
-    check(shadow[rand_index] == value, "value = %u, but shadow has %u",
-          value, shadow[rand_index]);
+    value = arr[rand_index]; /* CAUSE READ FAULT */
+    check(shadow[rand_index] == value, "page %p has value = %u (%x), but shadow has %u (%x)",
+          &arr[rand_index], value,
+          (uint32_t) jenkins_hash((uint8_t *) &arr[rand_index], PAGE_SIZE),
+          shadow[rand_index],
+          (uint32_t) jenkins_hash((uint8_t *) &shadow[rand_index], PAGE_SIZE));
 
-    printf("READ: arr[%d]=%u (%p)\n", rand_index, value, &arr[rand_index]);
+    printf("READ: arr[%d]=%u (%p) hash=%x\n", rand_index, value,
+           &arr[rand_index],
+           (uint32_t) jenkins_hash((uint8_t *) &arr[rand_index], PAGE_SIZE));
 
-    /* write the new character to a byte in it's own page */
-    printf("WRITE: arr[%d]=%u (%p)\n", rand_index, c, &arr[rand_index]);
 
-    arr[rand_index] = c;
+    arr[rand_index] = c; /* CAUSE WRITE FAULT */
     shadow[rand_index] = arr[rand_index];
 
+    /* write the new character to a byte in it's own page */
+    printf("WRITE: arr[%d]=%u (%p) hash=%x\n", rand_index, c,
+           &arr[rand_index],
+           (uint32_t) jenkins_hash((uint8_t *) &arr[rand_index], PAGE_SIZE));
+
     /*
-     * verify that the expected value was read from arr[] and 
+     * verify that the expected value was read from arr[] and
      * placed in shadow[]
      */
     check(shadow[rand_index] == c,
@@ -193,5 +218,5 @@ int main (int argc, char * argv[]) {
   return 0;
 
 error:
-  return 1;
+  return -1;
 }

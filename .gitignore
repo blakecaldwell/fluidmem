@@ -1,4 +1,3 @@
-vagrant-scalevm/.vagrant
 *.libs
 *.lo
 *.la
