@@ -23,15 +23,15 @@ hwloc_topology_t topology;
 #include <dbg.h>
 /* define the CPU used for each thread */
 /* relative value to the default CPU */
+#define CPU_FOR_UI_THREAD 3
+#define CPU_FOR_MAIN_THREAD 3
+#define CPU_FOR_NEW_UFD_HANDLER_THREAD 3
+#define CPU_FOR_REAPER_THREAD 3
 #define CPU_FOR_POLLING_THREAD 1
-#define CPU_FOR_REINIT_READPAGE_THREAD 2
-#define CPU_FOR_REINIT_EVICTPAGE_THREAD 2
-#define CPU_FOR_REAPER_THREAD 2
-#define CPU_FOR_UI_THREAD 2
-#define CPU_FOR_MAIN_THREAD 2
-#define CPU_FOR_NEW_UFD_HANDLER_THREAD 2
-#define CPU_FOR_WRITE_THREAD 3
 #define CPU_FOR_PREFETCH_THREAD 4
+#define CPU_FOR_WRITE_THREAD 2
+#define CPU_FOR_REINIT_READPAGE_THREAD 4
+#define CPU_FOR_REINIT_EVICTPAGE_THREAD 2
 
 #define handle_error_en(en, msg) \
 	do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
