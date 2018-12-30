@@ -729,10 +729,10 @@ int main (int argc, char *argv[])
   char optionStr2[] = "--prefetch_size=";
   char optionStr3[] = "--enable_prefetch=";
   char optionStr4[] = "--test_readahead";
+#endif
   char optionStr5[] = "--zookeeper=";
   char optionStr6[] = "--print_info";
   char optionStr7[] = "--exit-on-recoverable-error";
-#endif
 #ifdef TIMING
   char optionStr8[] = "--buckets_mask=";
   char optionStr9[] = "--max_bucket_slots=";
@@ -757,6 +757,7 @@ int main (int argc, char *argv[])
     else if (strncmp(argv[i], optionStr4, sizeof(optionStr4) - 1) == 0) {
       is_test_readahead = 1;
     }
+#endif
     else if (strncmp(argv[i], optionStr5, sizeof(optionStr5) - 1) == 0) {
       strncpy(zookeeperConn, argv[i] + sizeof(optionStr5) - 1, MAX_ZK_STRING_LEN);
     }
@@ -766,7 +767,6 @@ int main (int argc, char *argv[])
     else if (strncmp(argv[i], optionStr7, sizeof(optionStr7) - 1) == 0) {
       exit_on_recoverable_error = 1;
     }
-#endif
 #ifdef TIMING
     else if (strncmp(argv[i], optionStr8, sizeof(optionStr8) - 1) == 0) {
       buckets_mask  = atoi(argv[i] + sizeof(optionStr8) - 1);
