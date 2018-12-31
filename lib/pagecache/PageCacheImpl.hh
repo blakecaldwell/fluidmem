@@ -202,6 +202,7 @@ public:
     virtual void  readPageIfInPageCache_top( uint64_t hashcode, int fd, void ** buf );
     virtual int  readPageIfInPageCache_bottom( uint64_t hashcode, int fd, void ** buf );
     virtual void updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool zeroPage );
+    virtual void updatePageCacheAfterSkippedRead( uint64_t hashcode, int fd);
     virtual void invalidatePageCache( uint64_t hashcode, int fd );
     virtual void removeUFDFromPageCache( int fd, int * numPages );
     virtual uint64_t * removeUFDFromPageHash( int fd, int * numPages );

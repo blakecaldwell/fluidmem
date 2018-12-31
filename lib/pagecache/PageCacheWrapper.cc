@@ -44,6 +44,10 @@ extern "C" {
   {
     pageCache->updatePageCacheAfterWrite( hashcode, ufd, true );
   }
+  void updatePageCacheAfterSkippedRead( uint64_t hashcode, int fd )
+  {
+    pageCache->updatePageCacheAfterSkippedRead( hashcode, fd );
+  }
   void invalidatePageCache( PageCache * pageCache, int ufd, uint64_t hashcode )
   {
     pageCache->invalidatePageCache( hashcode, ufd );

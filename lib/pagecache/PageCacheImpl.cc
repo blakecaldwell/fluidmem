@@ -549,6 +549,31 @@ void PageCacheImpl::updatePageCacheAfterWrite( uint64_t hashcode, int fd, bool z
   log_trace_out("%s", __func__);
 }
 
+void PageCacheImpl::updatePageCacheAfterSkippedRead( uint64_t hashcode, int fd)
+{
+  log_trace_in("%s", __func__);
+
+  char t[sizeof(uint64_t)+sizeof(int)];
+  *((uint64_t*) &t[0]) = hashcode;
+  *((int*) &t[sizeof(uint64_t)]) = fd;
+  std::string k(t,sizeof(uint64_t)+sizeof(int));
+  page_hash::iterator itr = pagehash.find(k);
+
+  if( itr!=pagehash.end() && ( itr->second->ownership==OWNERSHIP_PAGE_CACHE || itr->second->ownership==OWNERSHIP_APPLICATION))
+  {
+    log_err("%s: Trying to update a page that didn't have ownership externram!", __func__);
+  }
+  else if( itr!=pagehash.end() && itr->second->ownership==OWNERSHIP_EXTERNRAM )
+  {
+    changeOwnershipWithItr( itr, OWNERSHIP_APPLICATION, false );
+  }
+  else
+  {
+    log_err("%s: Page was not found!", __func__);
+  }
+
+  log_trace_out("%s", __func__);
+}
 
 void PageCacheImpl::addPageHashNode( uint64_t hashcode, int fd, int ownership )
 {

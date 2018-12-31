@@ -33,6 +33,7 @@ int readPageIfInPageCache_bottom( PageCache * pageCache, int ufd, uint64_t hashc
 #endif
 void updatePageCacheAfterWrite( PageCache * pageCache, int ufd, uint64_t hashcode);
 void updatePageCacheAfterSkippedWrite( PageCache * pageCache, int ufd, uint64_t hashcode);
+void updatePageCacheAfterSkippedRead( uint64_t hashcode, int fd);
 void invalidatePageCache( PageCache * pageCache, int ufd, uint64_t hashcode );
 void addPageHashNode( uint64_t hashcode, int fd, int ownership );
 void pageCacheCleanup();

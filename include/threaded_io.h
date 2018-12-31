@@ -13,6 +13,7 @@ typedef struct write_info {
   UT_hash_handle hh2;
   info_key_t key;
   void * page;
+  bool in_flight;
 } write_info;
 
 typedef struct prefetch_info {
@@ -53,6 +54,7 @@ inline void add_write_info( int ufd, uint64_t pageaddr, void * page )
   s->key.ufd = ufd;
   memcpy( s->key.pageaddr, &pageaddr, sizeof(pageaddr) );
   s->page = page;
+  s->in_flight = false;
   HASH_ADD( hh2, write_list, key, sizeof(info_key_t), s );
 }
 
@@ -66,6 +68,15 @@ inline bool exist_write_info( int ufd, uint64_t pageaddr )
     return false;
   else
     return true;
+}
+
+inline write_info * find_write_info( int ufd, uint64_t pageaddr )
+{
+  write_info l, *p = NULL;
+  l.key.ufd = ufd;
+  memcpy( l.key.pageaddr, &pageaddr, sizeof(pageaddr) );
+  HASH_FIND( hh2, write_list, &l.key, sizeof(info_key_t), p );
+  return p;
 }
 
 inline write_info * get_one_write_info()
@@ -104,6 +115,21 @@ inline void del_write_info( int ufd, uint64_t pageaddr )
 inline int get_write_list_size()
 {
   return HASH_CNT( hh2, write_list );
+}
+
+inline void * extract_page_from_write_list ( write_info * w)
+{
+  void * ret = NULL;
+  if((w!=NULL) && (!(w->in_flight)))
+  {
+    ret = w->page;
+
+    // delete entry
+    HASH_DELETE( hh2, write_list, w );
+    free(w);
+  }
+
+  return ret;
 }
 
 void *write_into_externram_thread(void * tmp);

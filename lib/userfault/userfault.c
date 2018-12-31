@@ -121,6 +121,10 @@ void *write_into_externram_thread(void * tmp) {
           bufs[numWrite] = current->page;
           lengths[numWrite] = PAGE_SIZE;
           numWrite++;
+
+          // mark page as in_flight
+          current->in_flight = true;
+
           log_debug(
             "%s: writing the page %p stored at %p will be started by write_thread. write_list_size : %d",
             __func__, *((uint64_t*)current->key.pageaddr), current->page, size );
@@ -209,10 +213,10 @@ void *write_into_externram_thread(void * tmp) {
             int ret = munmap(bufs[k], PAGE_SIZE);
 #endif
             if (ret < 0) {
-              log_err("munmap to %p in %s (ret %d)", bufs[k], __func__, ret);
+              log_err("%s: munmap to %p", __func__, bufs[k]);
             }
             else {
-              log_debug("munmap to %p in %s (ret %d)", bufs[k], __func__, ret);
+              log_debug("%s: munmap to %p", __func__, bufs[k]);
             }
           }
         }
@@ -937,10 +941,10 @@ int evict_to_externram(int ufd, void * pageaddr) {
         free_ret = munmap(evict_tmp_page,PAGE_SIZE);
 #endif
         if (free_ret < 0) {
-          log_err("%s: munmap to %p (ret %d)", __func__, evict_tmp_page, free_ret);
+          log_err("%s: munmap to %p", __func__, evict_tmp_page);
         }
         else {
-          log_debug("%s: munmap to %p (ret %d)", __func__, evict_tmp_page, free_ret);
+          log_debug("%s: munmap to %p", __func__, evict_tmp_page);
         }
       }
     }
@@ -1043,10 +1047,10 @@ int evict_to_externram(int ufd, void * pageaddr) {
     free_ret = munmap(evict_tmp_page,PAGE_SIZE);
 #endif
     if (free_ret < 0) {
-      log_err("munmap to %p in %s (ret %d)", evict_tmp_page, __func__, free_ret);
+      log_err("%s: munmap to %p", __func__, evict_tmp_page);
     }
     else {
-      log_debug("munmap to %p in %s (ret %d)", evict_tmp_page, __func__, free_ret);
+      log_debug("%s: munmap to %p", __func__, evict_tmp_page);
     }
   }
 
@@ -1060,7 +1064,6 @@ int read_from_externram(int ufd, void * pageaddr) {
 
   // initialization & var init
   declare_timers();
-  bool sync = true;
   int length = -1;
   int ret = -1, ret2 = -1;
   int ret_munmap = -1;
@@ -1068,21 +1071,35 @@ int read_from_externram(int ufd, void * pageaddr) {
   StatsIncrPageFault_notlocked();
 #endif
   int numToEvict;
+  void ** read_tmp_page_ptr = NULL;
+  bool skip_read = false;
+  void *temp_ptr = NULL;
 
 #ifdef THREADED_WRITE_TO_EXTERNRAM
-  while(true)
+  while (true)
   {
     bool toWait = false;
+    void *page_from_write_list = NULL;
 
     log_lock("%s: locking list_lock", __func__);
     pthread_mutex_lock(&list_lock);
     log_lock("%s: locked list_lock", __func__);
 
     bool waiting = isWriterWaiting;
-    if(exist_write_info(ufd,(uint64_t)(uintptr_t)pageaddr))
+    write_info * w = find_write_info(ufd,(uint64_t)(uintptr_t)pageaddr);
+    if(w != NULL)
     {
-      toWait = true;
-      isUfhandlerWaiting = true;
+      temp_ptr = extract_page_from_write_list(w);
+      if (temp_ptr != NULL) {
+        log_debug("%s: the page %p could be pulled off the write list", __func__, pageaddr);
+        updatePageCacheAfterSkippedRead( (uint64_t)(uintptr_t) pageaddr, ufd );
+        read_tmp_page_ptr = &temp_ptr;
+      }
+      else {
+        // failed to extract page. must be in-flight
+        toWait = true;
+        isUfhandlerWaiting = true;
+      }
     }
     else
       isUfhandlerWaiting = false;
@@ -1158,18 +1175,36 @@ int read_from_externram(int ufd, void * pageaddr) {
 #endif
 #endif
 
-  void ** read_tmp_page_ptr = &read_tmp_page;
-#ifdef PAGECACHE
+  /*
+     Set read_tmp_page_ptr (will be given to place_data_page()) to:
+       1. the global read_tmp_page buffer
+       2. the page buffer stolen from the write list
+     This may be updated by functions that are passed read_tmp_page_ptr
+   */
+  if (read_tmp_page_ptr == NULL) {
+    read_tmp_page_ptr = &read_tmp_page;
+  }
+  else {
+    skip_read = true;
+    length = PAGE_SIZE;
+#ifdef ASYNREAD
+    ret2 = evict_if_needed(ufd, pageaddr, ASYN_PAGE);
+#endif
+    goto place_page_out;
+  }
 
+#ifdef PAGECACHE
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
 
   start_timing_bucket(start, READ_VIA_PAGE_CACHE);
 #ifdef ASYNREAD
-  readPageIfInPageCache_top(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
+  readPageIfInPageCache_top(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr,
+                            (void **)read_tmp_page_ptr);
 #else
-  length = readPageIfInPageCache(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
+  length = readPageIfInPageCache(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr,
+                                 (void **)read_tmp_page_ptr);
 #endif
   stop_timing(start, end, READ_VIA_PAGE_CACHE);
 
@@ -1190,17 +1225,19 @@ int read_from_externram(int ufd, void * pageaddr) {
 #endif
   }
   else
-    log_err("%s: failed to read page %p for invalid fd %s", __func__, pageaddr, ufd);
+    log_err("%s: failed to read page %p for invalid fd %d", __func__, pageaddr, ufd);
 #endif
 
 #ifdef ASYNREAD
+  // this is the case for when the page is not taken from the write list
   ret2 = evict_if_needed(ufd, pageaddr, ASYN_PAGE);
 
 #ifdef PAGECACHE
   log_lock("%s: locking pagecache_lock", __func__);
   pthread_mutex_lock(&pagecache_lock);
   log_lock("%s: locked pagecache_lock", __func__);
-  length = readPageIfInPageCache_bottom(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr, (void **)read_tmp_page_ptr);
+  length = readPageIfInPageCache_bottom(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr,
+                                        (void **)read_tmp_page_ptr);
   stop_timing(start, end, READ_VIA_PAGE_CACHE);
 
   log_lock("%s: unlocking pagecache_lock", __func__);
@@ -1214,12 +1251,13 @@ int read_from_externram(int ufd, void * pageaddr) {
     stop_timing(start, end, READ_PAGE);
   }
   else
-    log_err("%s: failed to read page %p for invalid fd %s", __func__, pageaddr, ufd);
+    log_err("%s: failed to read page %p for invalid fd %d", __func__, pageaddr, ufd);
 #endif
 #endif
 
+place_page_out:
   if (length == PAGE_SIZE) {
-    ret = place_data_page(ufd, (void*)(uintptr_t)pageaddr, read_tmp_page);
+    ret = place_data_page(ufd, (void*)(uintptr_t)pageaddr, *read_tmp_page_ptr);
     if (ret < 0) {
       log_err("%s: place_data_page", __func__);
     }
@@ -1233,6 +1271,16 @@ int read_from_externram(int ufd, void * pageaddr) {
     // ret = ufd if page eviction skipped
   } else {
     log_err("%s: we don't know how to handle a read of length %s", __func__, length);
+  }
+
+  if (skip_read) {
+    int ret_unmap = munmap(*read_tmp_page_ptr, PAGE_SIZE);
+    if (ret_unmap < 0) {
+      log_err("%s: munmap to %p", __func__, *read_tmp_page_ptr);
+    }
+    else {
+      log_debug("%s: munmap to %p", __func__, *read_tmp_page_ptr);
+    }
   }
 
 #ifdef ASYNREAD
