@@ -55,10 +55,18 @@ compare_stats_value ()
 function flush_monitor_buffers {
   # this can take a long time with virtualized ramcloud
   timeout 120s /fluidmem/build/bin/ui 127.0.0.1 f
+  if [ $? -ne 0 ]; then
+    echo "failed to flush monitor's buffers"
+    monitor_failed $LOG
+  fi
 }
 
 function reset_counters {
   timeout 20s /fluidmem/build/bin/ui 127.0.0.1 c > /dev/null
+  if [ $? -ne 0 ]; then
+    echo "failed to reset monitor's counters"
+    monitor_failed $LOG
+  fi
 }
 
 function monitor_failed {
@@ -90,13 +98,13 @@ function stop_monitor {
   /fluidmem/build/bin/ui 127.0.0.1 t
   if [ $? -ne 0 ]; then
     echo "failed to stop monitor"
-    monitor_failed
+    monitor_failed $LOG
   fi
 
   wait $pid
   if [ $? -ne 0 ]; then
     echo "monitor had exit code $?"
-    monitor_failed
+    monitor_failed $LOG
     # exits
   fi
 
@@ -131,6 +139,10 @@ function resize_monitor {
 
   echo "resizing monitor to cache size $1"
   timeout 20s /fluidmem/build/bin/ui 127.0.0.1 r $1
+  if [ $? -ne 0 ]; then
+    echo "failed to resize lru list"
+    monitor_failed $LOG
+  fi
 }
 
 function start_monitor {
@@ -140,7 +152,6 @@ function start_monitor {
     exit 1
   fi
 
-  set +e
   if [ -z "$4" ] || [ -z "$5" ]; then
     prefetch_args=
   else
@@ -179,7 +190,7 @@ function start_monitor {
 }
 
 function wait_for_monitor {
-  if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
+  if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
     echo "bad arguments passed to wait_for_monitor"
     cleanup
     exit 1
@@ -188,6 +199,7 @@ function wait_for_monitor {
   interval="$1"
   pid="$2"
   test_pid="$3"
+  LOG="$4"
 
   # Ensure that monitor is still running
   failed=0
@@ -198,6 +210,10 @@ function wait_for_monitor {
       break
     else
       timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s > /monitor.stats.new
+      if [ $? -ne 0 ]; then
+        echo "failed to get stats from monitor"
+        monitor_failed $LOG
+      fi
       if [ -e /monitor.stats ]; then
         if diff /monitor.stats /monitor.stats.new > /dev/null; then
             echo "Check num $count: no progress made in last $interval seconds. Current time:"
@@ -213,15 +229,20 @@ function wait_for_monitor {
 
   if [[ $failed -ne "0" ]]; then
     echo "Monitor failed before test was complete!!"
-    if ! kill $test_pid > /dev/null 2>&1; then
-      echo "Could not send SIGTERM to test process $test_pid" >&2
+    PGRP=$(ps -o pgid= $test_pid | grep -o [0-9]*)
+    if ! kill -- -"$PGRP" > /dev/null 2>&1; then
+      echo "Could not send SIGTERM to process group $PGRP" >&2
     fi
-    monitor_failed
-    # exits
+    monitor_failed $LOG
+    exit 1
   fi
 }
 
 function print_bucket_stats {
   echo -e "\nBucket Stats:"
   timeout 20s /fluidmem/build/bin/ui 127.0.0.1 b
+  if [ $? -ne 0 ]; then
+    echo "failed to get bucket stats from monitor"
+    monitor_failed $LOG
+  fi
 }

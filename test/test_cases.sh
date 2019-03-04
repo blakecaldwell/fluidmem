@@ -88,7 +88,7 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
     resize_monitor 1:
   fi
 
-  wait_for_monitor 1 "$pid" "${test_pid}"
+  wait_for_monitor 1 "$pid" "${test_pid}" $LOG
   # will return when test_pid is done
 
   set +e

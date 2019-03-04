@@ -140,7 +140,7 @@ do
       sleep 1
       resize_monitor 1
     fi
-    wait_for_monitor 1 "$pid" "${test_pid}"
+    wait_for_monitor 1 "$pid" "${test_pid}" $LOG
     # will return when test_pid is done
 
     set +e
