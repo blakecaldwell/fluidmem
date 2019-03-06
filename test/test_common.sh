@@ -9,10 +9,12 @@ compare_stats_value ()
   failed=
   echo "Checking that $1 is $2..."
 
-  fudge=0
+  fudge=
   if [ -n "$3" ]; then
     fudge="$3"
     echo "with a fudge factor of ${fudge}..."
+  else
+    fudge=0
   fi
 
   SAVEDIFS=$IFS
@@ -51,6 +53,36 @@ compare_stats_value ()
     true
   fi
 }
+
+get_stat_value ()
+{
+  if [ -z "$1" ]; then
+    echo "bad arguments passed to get_stats_value"
+    cleanup
+    exit 1
+  fi
+
+  done=
+  value=0
+
+  SAVEDIFS=$IFS
+  while IFS=$(echo -en "\n\b") read -ra LINE; do
+    while IFS=':' read stat value; do
+      if [[ "$stat" = "$1" ]]; then
+        value=$(echo -e "${value}" | tr -d '[:space:]')
+        done=0
+        break
+      fi
+    done <<< "${LINE[@]}"
+    if [ -n "$done" ]; then
+      break
+    fi
+  done <<< "${stats[@]}"
+  IFS=$SAVEDIFS
+
+  echo $value
+}
+
 
 function flush_monitor_buffers {
   # this can take a long time with virtualized ramcloud
@@ -243,6 +275,15 @@ function print_bucket_stats {
   timeout 20s /fluidmem/build/bin/ui 127.0.0.1 b
   if [ $? -ne 0 ]; then
     echo "failed to get bucket stats from monitor"
+    monitor_failed $LOG
+  fi
+}
+
+function print_externram_usage {
+  echo -e "\nExternRAM Usage:"
+  timeout 20s /fluidmem/build/bin/ui 127.0.0.1 u
+  if [ $? -ne 0 ]; then
+    echo "failed to get usage info from ExternRAM"
     monitor_failed $LOG
   fi
 }

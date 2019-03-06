@@ -45,18 +45,18 @@ function cleanup {
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source ${SCRIPT_DIR}/test_common.sh
 
-declare -a test_case_1_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
-declare -a test_case_1_stats_value=( 1 100 100 0 99 100 )
-declare -a test_case_2_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
-declare -a test_case_2_stats_value=( 1 1 1 0 0 1 )
+declare -a test_case_1_stats_name=( "LRU Buffer Capacity" "Registered ufds" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
+declare -a test_case_1_stats_value=( 1 100 100 100 0 99 100 )
+declare -a test_case_2_stats_name=( "LRU Buffer Capacity" "Registered ufds" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
+declare -a test_case_2_stats_value=( 1 1 1 1 0 0 1 )
 declare -a test_case_3_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_3_stats_value=( 1000 1000 1000 0 0 1000 )
 declare -a test_case_4_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_4_stats_value=( 2048 8192 4096 4096 6144 8192 )
 declare -a test_case_5_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_5_stats_value=( 2048 8192 4096 4096 6144 8192 )
-declare -a test_case_6_stats_name=( "LRU Buffer Capacity" )
-declare -a test_case_6_stats_value=( 2048 )
+declare -a test_case_6_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Hit Count" "Cache Miss Count" "Writes Avoided" )
+declare -a test_case_6_stats_value=( 2048 199672 20450 179222 197605 0 199672 450 )
 declare -a test_case_7_stats_name=( "LRU Buffer Capacity" "Total Page Fault Count" "Zero Page Count" "Placed Data Page Count" "Page Eviction Count" "Cache Miss Count" )
 declare -a test_case_7_stats_value=( 1 40960 4096 36864 40959 40960 )
 
@@ -65,6 +65,25 @@ declare -a stats
 
 # start monitor with cache_size of 1
 start_monitor "$LOG" "$LOCATOR"  "$ZOOKEEPER"
+
+# check that monitor is running
+interval=1
+while true; do
+  echo "looking for monitor running at $pid"
+  if  kill -0 $pid > /dev/null 2>&1; then
+  echo "found monitor running $pid"
+    if [ -e /var/run/fluidmem/monitor.socket ]; then
+      timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s
+      if [ $? -ne 0 ]; then
+        echo "failed to get stats from monitor"
+      else
+        break
+      fi
+    fi
+  fi
+  sleep $interval
+  echo "waiting $interval second for monitor to start up"
+done
 
 let test_case=1
 for cache_size in 1 1 1000 2048 2048 2048 2048; do
@@ -84,8 +103,8 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
   test_pid=$!
 
   if [[ ${test_case} -eq "7" ]]; then
-    sleep 2;
-    resize_monitor 1:
+    sleep 2
+    resize_monitor 1
   fi
 
   wait_for_monitor 1 "$pid" "${test_pid}" $LOG
@@ -119,32 +138,44 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
   echo
   echo "Comparing stats..."
   let count=0
+
   for i in ${!NAME_ARRAY}; do
     stat_name=$i
     VALUE="${STATS_VALUE}[$count]"
     stat_value=${!VALUE}
 
-    # set fudge factor for test case 6
     fudge=
+    if [[ "$stat_name" = "Page Eviction Count" ]]; then
+      stat_value=$(( $( get_stat_value "Total Page Fault Count" ) - $(get_stat_value "LRU Buffer Capacity" )))
+      fudge=$(get_stat_value "Zero Pages Encountered" )
+      if [[ "$fudge" -eq "0" ]]; then
+        # don't pass 0 to compare stats and suppress output
+        fudge=
+      fi
+    elif [[ "$stat_name" = "Cache Miss Count" ]]; then
+      stat_value=$( get_stat_value "Total Page Fault Count" )
+    elif [[ "$stat_name" = "Placed Data Page Count" ]]; then
+      stat_value=$(( $( get_stat_value "Total Page Fault Count" ) - $(get_stat_value "Zero Page Count" )))
+    fi
+
+    # set fudge factor for test case 6
     if [[ "$test_case" -eq "6" ]]; then
       if [[ "$stat_name" = "Total Page Fault Count" ]]; then
-        fudge=50
-      elif [[ "$stat_name" = "Page Eviction Count" ]]; then
-        fudge=50
-      elif [[ "$stat_name" = "Placed Data Page Count" ]]; then
-        fudge=50
-      elif [[ "$stat_name" = "Cache Miss Count" ]]; then
-        fudge=50
+        fudge=100
+      elif [[ "$stat_name" = "Zero Page Count" ]]; then
+        stat_value=$(( $( get_stat_value "Writes Avoided" ) + 20000 ))
       elif [[ "$stat_name" = "Writes Avoided" ]]; then
-        fudge=50
+        fudge=100
       fi
     fi
 
     compare_stats_value ${stat_name} ${stat_value} $fudge
+
+    # check return of comparing stats
     if [[ "$?" -ne "0" ]]; then
       echo "Failed comparing $stat_name in test_case $test_case: expected value $stat_value"
       cleanup
-      exit 1
+      exit 160
     fi
     (( count ++ ))
   done
@@ -152,6 +183,19 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
   set -e
 
   echo "Comparing stats was succesful."
+
+  if [[ ${test_case} -eq "1" ]]; then
+    # flush monitor
+    flush_monitor_buffers
+  fi
+
+  if [[ ${test_case} -eq "6" ]]; then
+    # TODO right now usage caused core dump
+    # print_externram_usage
+    flush_monitor_buffers
+    # print_externram_usage
+  fi
+
   print_bucket_stats
   echo -e "\nMoving on to next step\n"
   reset_counters

@@ -88,11 +88,6 @@ int fault_test(int num_pages, int unique_writes, int cycles) {
 
     pthread_barrier_wait(&finish_barrier);
 
-    // if we cleanup too early, we may get EINVAL when monitor tries evicting
-    // since this thread is woken up on ZERO or COPY and eviction happens
-    // asynchronously
-    sleep(1);
-
     // Cleanup
     int rc = disable_ufd_area(ufd, (void *)arr_region, arr_size);
     if (rc < 0)
@@ -221,13 +216,6 @@ void *threaded_fault_test(void *args) {
     }
 
     pthread_barrier_wait(&finish_barrier);
-
-    // if we cleanup too early, we may get EINVAL when monitor tries evicting
-    // since this thread is woken up on ZERO or COPY and eviction happens
-    // asynchronously
-    printf("TID %d: test is done, sleeping for 5 seconds to let all threads finish\n",
-           syscall(SYS_gettid));
-    sleep(5);
 
     // Cleanup
     int rc = disable_ufd_area(my_ufd, (void *)my_arr, my_arr_size);
