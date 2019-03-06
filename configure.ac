@@ -168,6 +168,11 @@ esac],
 [timing=false])
 AM_CONDITIONAL(TIMING, test x"$timing" = x"true")
 
+if test x"$timing" = x"true" && test x"$monitorstats" != x"true"
+then
+  AC_MSG_ERROR([monitorstats should be enabled to enable timing]) ;
+fi
+
 AC_ARG_ENABLE(threadedreinit,
 AS_HELP_STRING([--enable-threadedreinit],
                [enable the threaded reinitialization, default: no]),
@@ -181,7 +186,7 @@ AM_CONDITIONAL(THREADED_REINIT, test x"$threadedreinit" = x"true")
 
 if test x"$threadedprefetch" = x"true" && test x"$pagecache" != x"true"
 then
-  AC_MSG_ERROR([${threadedprefetch}${pagecache} pagecache should be enabled to enable the threaded prefetch]) ;
+  AC_MSG_ERROR([pagecache should be enabled to enable the threaded prefetch]) ;
 fi
 
 AC_ARG_ENABLE(reaperthread,
@@ -195,16 +200,16 @@ esac],
 [reaperthread=false])
 AM_CONDITIONAL(REAPERTHREAD, test x"$reaperthread" = x"true")
 
-AC_ARG_ENABLE(enable_affinity,
+AC_ARG_ENABLE(affinity,
 AS_HELP_STRING([--enable-affinity],
                [enable affinity, default: yes]),
 [case "${enableval}" in
-             yes) enable_affinityd=true ;;
-             no)  enable_affinity=false ;;
+             yes) affinity=true ;;
+             no)  affinity=false ;;
              *)   AC_MSG_ERROR([bad value ${enableval} for --enable-affinity]) ;;
 esac],
-[enable_affinity=true])
-AM_CONDITIONAL(ENABLE_AFFINITY, test x"$enable_affinity" = x"true")
+[affinity=true])
+AM_CONDITIONAL(AFFINITY, test x"$affinity" = x"true")
 
 AC_ARG_ENABLE(asynread,
 AS_HELP_STRING([--enable-asynread],
@@ -216,11 +221,6 @@ AS_HELP_STRING([--enable-asynread],
 esac],
 [asynread=false])
 AM_CONDITIONAL(ASYNREAD, test x"$asynread" = x"true")
-
-if test x"$threadedprefetch" = x"true" && test x"$pagecache" != x"true"
-then
-  AC_MSG_ERROR([${threadedprefetch}${pagecache} pagecache should be enabled to enable the threaded prefetch]) ;
-fi
 
 AC_PROG_CC
 AC_PROG_CXX
