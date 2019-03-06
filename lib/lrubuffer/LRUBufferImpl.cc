@@ -80,7 +80,7 @@ void LRUBufferImpl::referenceCachedNode(uint64_t key, int ufd) {
   log_trace_out("%s", __func__);
 }
 
-c_cache_node LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
+c_cache_node LRUBufferImpl::insertCacheNode(uint64_t key, int ufd, bool evict) {
   log_trace_in("%s", __func__);
 
   cache_node node;
@@ -95,8 +95,9 @@ c_cache_node LRUBufferImpl::insertCacheNode(uint64_t key, int ufd) {
 #ifdef MONITORSTATS
   StatsIncrLRUBufferSize();
 #endif
-  if (isLRUSizeExceeded()) {
-    log_debug("%s: LRU size exceeded", __func__);
+
+  if (evict && isLRUSizeExceeded()) {
+    log_debug("%s: LRU size exceeded. Calling popLRU", __func__);
     return_node = popLRU();
   }
 

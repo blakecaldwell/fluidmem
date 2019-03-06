@@ -145,7 +145,7 @@ public:
     LRUBufferImpl();
 
     virtual void                referenceCachedNode(uint64_t key, int ufd);
-    virtual struct c_cache_node insertCacheNode(uint64_t key, int ufd);
+    virtual struct c_cache_node insertCacheNode(uint64_t key, int ufd, bool evict);
     virtual int                 popNLRU(int num_pop, c_cache_node ** node_list);
     virtual int                 isLRUSizeExceeded(void);
     virtual struct c_cache_node getLRU();

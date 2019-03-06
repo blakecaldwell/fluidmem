@@ -21,12 +21,14 @@ typedef struct c_cache_node c_cache_node;
 
 LRUBuffer* newLRUBuffer();
 
-c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd);
+c_cache_node insertCacheNodeAndEvict(LRUBuffer *l, uint64_t key, int ufd);
+void insertCacheNode(LRUBuffer *l, uint64_t key, int ufd);
 void referenceCachedNode(LRUBuffer *l, uint64_t key, int ufd);
 int popNLRU(LRUBuffer *l, int num_pop, c_cache_node ** node_list);
 c_cache_node getLRU(LRUBuffer *l);
 int isLRUSizeExceeded(LRUBuffer *l);
 int getLRUBufferSize(LRUBuffer *l);
+int getLRUBufferMaxSize(LRUBuffer *l);
 int setLRUBufferSize(LRUBuffer *l, int size);
 void printLRUBuffer(LRUBuffer *l, FILE * file);
 uint64_t * removeUFDFromLRU(LRUBuffer *l, int ufd, int *num_pages);

@@ -372,7 +372,6 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
 
   int ret = 0, ret2 = 0;
   uint64_t key;
-  bool delayed_evict = false;
 
 #ifdef CACHE
   log_lock("%s: locking lru_lock", __func__);
@@ -380,7 +379,7 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
   log_lock("%s: locked lru_lock", __func__);
 
   start_timing_bucket(start, INSERT_LRU_CACHE_NODE);
-  struct c_cache_node evict_node = insertCacheNode(lru, (uint64_t)dst, ufd);
+  struct c_cache_node evict_node = insertCacheNodeAndEvict(lru, (uint64_t)dst, ufd);
   stop_timing(start, end, INSERT_LRU_CACHE_NODE);
 
   log_lock("%s: unlocking lru_lock", __func__);
@@ -436,7 +435,7 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
 #ifdef MONITORSTATS
       StatsIncrWriteSkippedZero_notlocked();
 #endif
-      log_info("%s: tried evicting zeropage %p from ufd %d, putting it back on lrubuffer", __func__, (void*)(uintptr_t)key, evict_node.ufd);
+      log_debug("%s: tried evicting zeropage %p from ufd %d, putting it back on lrubuffer", __func__, (void*)(uintptr_t)key, evict_node.ufd);
       log_lock("%s: locking lru_lock", __func__);
       pthread_mutex_lock(&lru_lock);
       log_lock("%s: locked lru_lock", __func__);
@@ -448,8 +447,6 @@ int evict_if_needed(int ufd, void * dst, int page_type) {
       log_lock("%s: unlocking lru_lock", __func__);
       pthread_mutex_unlock(&lru_lock);
       log_lock("%s: unlocked lru_lock", __func__);
-
-      delayed_evict=true;
     }
     else {
       log_err("%s: eviction of page %p failed", __func__, (void*)(uintptr_t)key);
@@ -803,6 +800,9 @@ int evict_to_externram_multi(int size)
 #endif
       log_debug("%s: eviction of page %p skipped", __func__, (void*)(uintptr_t)key);
     }
+    else if (ret == 2) {
+      log_debug("%s: eviction of page %p delayed", __func__, (void*)(uintptr_t)key);
+    }
     else {
       log_err("%s: eviction of page %p failed.", __func__, (void*)(uintptr_t)key);
     }
@@ -1027,16 +1027,12 @@ int evict_to_externram(int ufd, void * pageaddr) {
 #endif
   }
   else if (ret == 2) {
-    // tried evicting zeropage. feign successful eviction
+    // tried evicting zeropage
     log_debug("%s: Skipping writing the zeropage at (%p fd %d) to externRAM.", __func__,
               pageaddr, ufd);
-    log_debug("%s: lrubuffer may exceed capacity. size is %d", __func__, getLRUBufferSize(lru));
-    ret = 0;
-#ifdef PAGECACHE
-    start_timing_bucket(start, UPDATE_PAGE_CACHE);
-    updatePageCacheAfterSkippedWrite(pageCache, ufd, (uint64_t)(uintptr_t)pageaddr);
-    stop_timing(start, end, UPDATE_PAGE_CACHE);
-#endif
+    ret = 2;
+
+    // the page will be put back on LRU list, so don't update page cache
   }
 
   // cleanup
@@ -1071,6 +1067,7 @@ int read_from_externram(int ufd, void * pageaddr) {
 #ifdef MONITORSTATS
   StatsIncrPageFault_notlocked();
 #endif
+  int numToEvict;
 
 #ifdef THREADED_WRITE_TO_EXTERNRAM
   while(true)
@@ -1248,6 +1245,34 @@ int read_from_externram(int ufd, void * pageaddr) {
   pthread_mutex_unlock(&read_lock);
   log_lock("%s: unlocked read_lock", __func__);
 #endif
+
+  // now is also a good time to try and evict pages to get LRUbuffer to the proper size
+  log_lock("%s: locking lru_lock", __func__);
+  pthread_mutex_lock(&lru_lock);
+  log_lock("%s: locked lru_lock", __func__);
+
+  numToEvict = getLRUBufferSize(lru) - getLRUBufferMaxSize(lru);
+  if (numToEvict > 0) {
+    log_debug("%s: the LRUBuffer has %d more pages that it should. Calling evict_to_externram_multi.",
+            __func__, numToEvict);
+    ret2 = evict_to_externram_multi(numToEvict);
+
+    log_lock("%s: unlocking lru_lock", __func__);
+    pthread_mutex_unlock(&lru_lock);
+    log_lock("%s: unlocked lru_lock", __func__);
+
+    // print log message outside of lock scope
+    if(ret2 != numToEvict) {
+      log_warn(
+               "%s: failed to evict some_pages. attempted=%d, evicted=%d",
+              __func__, numToEvict, ret2);
+    }
+  }
+  else {
+    log_lock("%s: unlocking lru_lock", __func__);
+    pthread_mutex_unlock(&lru_lock);
+    log_lock("%s: unlocked lru_lock", __func__);
+  }
 
 #ifdef MONITORSTATS
   StatsSetLastFaultTime();

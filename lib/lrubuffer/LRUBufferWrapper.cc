@@ -25,8 +25,11 @@ extern "C" {
   void referenceCachedNode(LRUBuffer *l, uint64_t key, int ufd) {
     l->referenceCachedNode(key, ufd);
   }
-  struct c_cache_node insertCacheNode(LRUBuffer *l, uint64_t key, int ufd) {
-    return l->insertCacheNode(key, ufd);
+  struct c_cache_node insertCacheNodeAndEvict(LRUBuffer *l, uint64_t key, int ufd) {
+    return l->insertCacheNode(key, ufd, true);
+  }
+  void insertCacheNode(LRUBuffer *l, uint64_t key, int ufd) {
+    l->insertCacheNode(key, ufd, false);
   }
   int popNLRU(LRUBuffer *l, int num_pop, c_cache_node ** node_list) {
     return l->popNLRU(num_pop, node_list);
@@ -39,6 +42,9 @@ extern "C" {
   }
   int getLRUBufferSize(LRUBuffer *l) {
     return l->getSize();
+  }
+  int getLRUBufferMaxSize(LRUBuffer *l) {
+    return l->getMaxSize();
   }
   int setLRUBufferSize(LRUBuffer *l, int size) {
     return l->setSize(size);
