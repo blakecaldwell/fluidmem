@@ -47,7 +47,7 @@ sem_t prefetcher_sem;
 sem_t ufhandler_sem;
 sem_t flushed_write_sem;
 
-inline void add_write_info( int ufd, uint64_t pageaddr, void * page )
+void add_write_info( int ufd, uint64_t pageaddr, void * page )
 {
   write_info *s;
   s = (write_info *) malloc(sizeof(write_info));
@@ -58,7 +58,7 @@ inline void add_write_info( int ufd, uint64_t pageaddr, void * page )
   HASH_ADD( hh2, write_list, key, sizeof(info_key_t), s );
 }
 
-inline bool exist_write_info( int ufd, uint64_t pageaddr )
+bool exist_write_info( int ufd, uint64_t pageaddr )
 {
   write_info l, *p = NULL;
   l.key.ufd = ufd;
@@ -79,7 +79,7 @@ inline write_info * find_write_info( int ufd, uint64_t pageaddr )
   return p;
 }
 
-inline write_info * get_one_write_info()
+write_info * get_one_write_info()
 {
   write_info *current, *tmp;
   HASH_ITER( hh2, write_list, current, tmp ) {
@@ -97,7 +97,7 @@ void print_write_info()
   }
 }
 
-inline void del_write_info( int ufd, uint64_t pageaddr )
+void del_write_info( int ufd, uint64_t pageaddr )
 {
   write_info l, *p = NULL;
   l.key.ufd = ufd;
@@ -112,7 +112,7 @@ inline void del_write_info( int ufd, uint64_t pageaddr )
     log_err("%s: failed to delete key %llx from write_list", __func__, pageaddr);
 }
 
-inline int get_write_list_size()
+int get_write_list_size()
 {
   return HASH_CNT( hh2, write_list );
 }
@@ -134,7 +134,7 @@ inline void * extract_page_from_write_list ( write_info * w)
 
 void *write_into_externram_thread(void * tmp);
 
-inline void add_prefetch_info( int ufd, uint64_t pageaddr )
+void add_prefetch_info( int ufd, uint64_t pageaddr )
 {
   prefetch_info *s;
   s = (prefetch_info *) malloc(sizeof(prefetch_info));
@@ -143,7 +143,7 @@ inline void add_prefetch_info( int ufd, uint64_t pageaddr )
   HASH_ADD( hh3, prefetch_list, key, sizeof(info_key_t), s );
 }
 
-inline bool exist_prefetch_info( int ufd, uint64_t pageaddr )
+bool exist_prefetch_info( int ufd, uint64_t pageaddr )
 {
   prefetch_info l, *p = NULL;
   l.key.ufd = ufd;
@@ -155,7 +155,7 @@ inline bool exist_prefetch_info( int ufd, uint64_t pageaddr )
     return true;
 }
 
-inline prefetch_info * get_one_prefetch_info()
+prefetch_info * get_one_prefetch_info()
 {
   prefetch_info *current, *tmp;
   HASH_ITER( hh3, prefetch_list, current, tmp ) {
@@ -173,7 +173,7 @@ void print_prefetch_info()
   }
 }
 
-inline void del_prefetch_info( int ufd, uint64_t pageaddr )
+void del_prefetch_info( int ufd, uint64_t pageaddr )
 {
   prefetch_info l, *p = NULL;
   l.key.ufd = ufd;
@@ -188,7 +188,7 @@ inline void del_prefetch_info( int ufd, uint64_t pageaddr )
     log_err("%s: failed to delete key %llx from prefetch_list", __func__, pageaddr);
 }
 
-inline int get_prefetch_list_size()
+int get_prefetch_list_size()
 {
   return HASH_CNT( hh3, prefetch_list );
 }

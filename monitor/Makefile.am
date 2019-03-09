@@ -52,7 +52,8 @@ monitor_LDADD = \
   -luserfault \
   -lexternram \
   -llrubuffer \
-  -lpagecache
+  -lpagecache \
+  -lm
 
 
 ui_SOURCES = ui.c
