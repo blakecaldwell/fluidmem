@@ -15,6 +15,8 @@
 #include "PageCacheImpl.hh"
 #include <dbg.h>
 
+#undef check // For Boost 1.58 libraries
+
 #include <stdio.h>
 #include <cstdint>  // for uint types
 #include <sys/user.h> /* for PAGE_MASK */

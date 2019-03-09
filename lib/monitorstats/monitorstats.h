@@ -89,9 +89,9 @@ extern MonitorStats* _pstats;
  *
  */
 
-inline void StatsDestroy();
-inline void StatsClear();
-inline void MonitorStatsInit();
+void StatsDestroy();
+void StatsClear();
+void MonitorStatsInit();
 
 // functions to increment counters
 static inline void StatsIncrCacheHit_notlocked()

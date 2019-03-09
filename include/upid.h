@@ -38,7 +38,7 @@ void add_upid_in_map( int fd, uint64_t upid )
   log_trace_out("add_upid_in_map");
 }
 
-inline uint64_t get_upid_by_fd(int fd)
+uint64_t get_upid_by_fd(int fd)
 {
   log_trace_in("get_upid_by_fd");
 

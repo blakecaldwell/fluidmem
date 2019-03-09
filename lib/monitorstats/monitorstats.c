@@ -25,7 +25,7 @@
  *
  */
 
-inline void StatsDestroy()
+void StatsDestroy()
 {
         log_trace_in("%s", __func__);
 
@@ -42,7 +42,7 @@ inline void StatsDestroy()
 }
 
 // call to init this library of functions
-inline void MonitorStatsInit()
+void MonitorStatsInit()
 {
         log_trace_in("%s", __func__);
 
@@ -54,7 +54,7 @@ inline void MonitorStatsInit()
         log_trace_out("%s", __func__);
 }
 
-inline void StatsClear()
+void StatsClear()
 {
         _pstats->total_pagefault_count = 0;
         _pstats->placed_data_pages_count = 0;
