@@ -26,10 +26,8 @@ pthread_t prefetch_worker;
 write_info * write_list = NULL;
 prefetch_info * prefetch_list = NULL;
 
-#ifdef THREADED_PREFETCH
 #ifdef ASYNREAD
 pthread_mutex_t read_lock;
-#endif
 #endif
 
 pthread_mutex_t list_lock;
