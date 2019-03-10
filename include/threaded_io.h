@@ -68,7 +68,7 @@ bool exist_write_info( int ufd, uint64_t pageaddr )
     return true;
 }
 
-inline write_info * find_write_info( int ufd, uint64_t pageaddr )
+write_info * find_write_info( int ufd, uint64_t pageaddr )
 {
   write_info l, *p = NULL;
   l.key.ufd = ufd;
@@ -115,7 +115,7 @@ int get_write_list_size()
   return HASH_CNT( hh2, write_list );
 }
 
-inline void * extract_page_from_write_list ( write_info * w)
+void * extract_page_from_write_list ( write_info * w)
 {
   void * ret = NULL;
   if((w!=NULL) && (!(w->in_flight)))
