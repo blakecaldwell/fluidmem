@@ -198,10 +198,14 @@ int externRAMClientImpl::read(uint64_t key, void ** value) {
   pthread_mutex_unlock(&noop_mutex);
   log_lock("%s: unlocked noop_mutex", __func__);
 
-  log_debug("%s: retrieved key %p with buffer %p and hash %x", __func__, key, *value, (uint32_t) jenkins_hash((uint8_t *) *value, PAGE_SIZE));
+#ifdef DEBUG
+  if (ret == PAGE_SIZE) {
+    log_debug("%s: retrieved key %p with buffer %p and hash %x", __func__, key, *value, (uint32_t) jenkins_hash((uint8_t *) *value, PAGE_SIZE));
+  }
+#endif
 
   log_trace_out("%s", __func__);
-  return PAGE_SIZE;
+  return ret;
 }
 
 #ifdef ASYNREAD
