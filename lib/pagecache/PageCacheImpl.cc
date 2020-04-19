@@ -682,8 +682,7 @@ uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
   int ufd;
 
   page_hash::iterator itr = pagehash.begin();
-  int i=0;
-  for ( ; itr!= pagehash.end(); itr++, i++ ) {
+  while (itr != pagehash.end()) {
     t = itr->first.c_str();
     hashcode = *((uint64_t*) &t[0]);
     ufd = *((int*) &t[sizeof(uint64_t)]);
@@ -692,7 +691,10 @@ uint64_t * PageCacheImpl::removeUFDFromPageHash(int fd, int * numPages) {
       if( itr->second->ownership==OWNERSHIP_EXTERNRAM ) {
         keyVector.push_back(hashcode & (uint64_t)(PAGE_MASK));
       }
-      pagehash.erase(itr);
+      itr = pagehash.erase(itr);
+    }
+    else {
+      itr++;
     }
   }
   *numPages = keyVector.size();
