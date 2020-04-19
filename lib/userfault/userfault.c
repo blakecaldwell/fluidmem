@@ -1311,7 +1311,7 @@ place_page_out:
 
     // print log message outside of lock scope
     if(ret2 != numToEvict) {
-      log_warn(
+      log_debug(
                "%s: failed to evict some_pages. attempted=%d, evicted=%d",
               __func__, numToEvict, ret2);
     }
