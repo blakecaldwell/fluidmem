@@ -14,12 +14,14 @@ if [[ "$1" == "skip_threaded" ]]; then
   SKIP_THREADED=true
 fi
 
+FLUIDMEM_PREFIX=$HOME/fluidmem
+
 # DEBUG is passed as second agument
 if [[ "DEBUG" = "$2" ]]; then
-  echo "Command line with DEBUG. Logging to /monitor.log.DEBUG"
-  LOG="/monitor.log.DEBUG"
+  echo "Command line with DEBUG. Logging to ${FLUIDMEM_PREFIX}/monitor.log.DEBUG"
+  LOG="${FLUIDMEM_PREFIX}/monitor.log.DEBUG"
 else
-  LOG="/monitor.log"
+  LOG="${FLUIDMEM_PREFIX}/monitor.log"
 fi
 
 pid=
@@ -73,7 +75,7 @@ while true; do
   if  kill -0 $pid > /dev/null 2>&1; then
   echo "found monitor running $pid"
     if [ -e /var/run/fluidmem/monitor.socket ]; then
-      timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s
+      timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 s
       if [ $? -ne 0 ]; then
         echo "failed to get stats from monitor"
       else
@@ -99,7 +101,7 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
   resize_monitor $cache_size
 
   echo "Running test_cases for case $test_case"
-  time /fluidmem/build/bin/test_cases $test_case &
+  time ${FLUIDMEM_PREFIX}/build/bin/test_cases $test_case &
   test_pid=$!
 
   if [[ ${test_case} -eq "7" ]]; then
@@ -122,7 +124,7 @@ for cache_size in 1 1 1000 2048 2048 2048 2048; do
   set -e
 
   echo -e "\nStats from monitor:"
-  stats=$(timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s)
+  stats=$(timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 s)
 
   SAVEIFS=$IFS
   IFS=$(echo -en "\n\b")

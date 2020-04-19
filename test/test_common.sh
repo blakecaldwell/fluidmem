@@ -86,7 +86,7 @@ get_stat_value ()
 
 function flush_monitor_buffers {
   # this can take a long time with virtualized ramcloud
-  timeout 120s /fluidmem/build/bin/ui 127.0.0.1 f
+  timeout 120s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 f
   if [ $? -ne 0 ]; then
     echo "failed to flush monitor's buffers"
     monitor_failed $LOG
@@ -94,7 +94,7 @@ function flush_monitor_buffers {
 }
 
 function reset_counters {
-  timeout 20s /fluidmem/build/bin/ui 127.0.0.1 c > /dev/null
+  timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 c > /dev/null
   if [ $? -ne 0 ]; then
     echo "failed to reset monitor's counters"
     monitor_failed $LOG
@@ -127,7 +127,7 @@ function stop_monitor {
   LOG="$2"
 
   echo -n "Stopping monitor using ui."
-  /fluidmem/build/bin/ui 127.0.0.1 t
+  ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 t
   if [ $? -ne 0 ]; then
     echo "failed to stop monitor"
     monitor_failed $LOG
@@ -170,7 +170,7 @@ function resize_monitor {
   fi
 
   echo "resizing monitor to cache size $1"
-  timeout 20s /fluidmem/build/bin/ui 127.0.0.1 r $1
+  timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 r $1
   if [ $? -ne 0 ]; then
     echo "failed to resize lru list"
     monitor_failed $LOG
@@ -193,7 +193,7 @@ function start_monitor {
   fi
 
   # start with initial cache size of 1
-  cmd="/fluidmem/build/bin/monitor $2 --cache_size=1 \
+  cmd="${FLUIDMEM_PREFIX}/build/bin/monitor $2 --cache_size=1 \
     --zookeeper=$3 \
     --print_info \
     --exit-on-recoverable-error \
@@ -241,18 +241,18 @@ function wait_for_monitor {
       failed=1
       break
     else
-      timeout 20s /fluidmem/build/bin/ui 127.0.0.1 s > /monitor.stats.new
+      timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 s > ${FLUIDMEM_PREFIX}/monitor.stats.new
       if [ $? -ne 0 ]; then
         echo "failed to get stats from monitor"
         monitor_failed $LOG
       fi
-      if [ -e /monitor.stats ]; then
-        if diff /monitor.stats /monitor.stats.new > /dev/null; then
+      if [ -e ${FLUIDMEM_PREFIX}/monitor.stats ]; then
+        if diff ${FLUIDMEM_PREFIX}/monitor.stats ${FLUIDMEM_PREFIX}/monitor.stats.new > /dev/null; then
             echo "Check num $count: no progress made in last $interval seconds. Current time:"
             date
         fi
       fi
-      timeout 20s mv /monitor.stats.new /monitor.stats
+      timeout 20s mv ${FLUIDMEM_PREFIX}/monitor.stats.new ${FLUIDMEM_PREFIX}/monitor.stats
     fi
     if ! kill -0 $test_pid > /dev/null 2>&1; then
       break
@@ -272,7 +272,7 @@ function wait_for_monitor {
 
 function print_bucket_stats {
   echo -e "\nBucket Stats:"
-  timeout 20s /fluidmem/build/bin/ui 127.0.0.1 b
+  timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 b
   if [ $? -ne 0 ]; then
     echo "failed to get bucket stats from monitor"
     monitor_failed $LOG
@@ -281,7 +281,7 @@ function print_bucket_stats {
 
 function print_externram_usage {
   echo -e "\nExternRAM Usage:"
-  timeout 20s /fluidmem/build/bin/ui 127.0.0.1 u
+  timeout 20s ${FLUIDMEM_PREFIX}/build/bin/ui 127.0.0.1 u
   if [ $? -ne 0 ]; then
     echo "failed to get usage info from ExternRAM"
     monitor_failed $LOG
