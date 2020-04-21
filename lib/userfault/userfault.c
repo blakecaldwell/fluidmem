@@ -1092,7 +1092,9 @@ int read_from_externram(int ufd, void * pageaddr) {
       temp_ptr = extract_page_from_write_list(w);
       if (temp_ptr != NULL) {
         log_debug("%s: the page %p could be pulled off the write list", __func__, pageaddr);
+#ifdef PAGECACHE
         updatePageCacheAfterSkippedRead( (uint64_t)(uintptr_t) pageaddr, ufd );
+#endif
         read_tmp_page_ptr = &temp_ptr;
       }
       else {
